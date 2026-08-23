@@ -1,6 +1,9 @@
 import { CreateMLCEngine } from "https://esm.run/@mlc-ai/web-llm";
 
 // DOM Elements
+const chatView = document.getElementById('chat-view');
+const profileView = document.getElementById('profile-view');
+const sysPromptView = document.getElementById('system-prompt-view');
 const chatMessages = document.getElementById('chat-messages');
 const userInput = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
@@ -9,27 +12,54 @@ const historyList = document.getElementById('history-list');
 const statusMsg = document.getElementById('status-msg');
 const modelSelect = document.getElementById('model-select');
 const profileBtn = document.getElementById('profile-btn');
-const profileModal = document.getElementById('profile-modal');
+const sysPromptBtn = document.getElementById('system-prompt-btn');
+
+const profileTextarea = document.getElementById('profile-textarea');
+const sysPromptTextarea = document.getElementById('system-prompt-textarea');
 
 // State
 let engine;
 let currentChatId = Date.now().toString();
 let chats = JSON.parse(localStorage.getItem('local_ai_chats')) || {};
 let currentMessages = chats[currentChatId] || [];
-let userProfile = JSON.parse(localStorage.getItem('local_ai_profile')) || [];
 
-// Load saved model preference
-const savedModel = localStorage.getItem('local_ai_model') || "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+// Load editable settings
+let savedProfile = localStorage.getItem('local_ai_profile_text') || "";
+let savedSysPrompt = localStorage.getItem('local_ai_sys_prompt_text') || "You are a helpful, private AI assistant.";
+profileTextarea.value = savedProfile;
+sysPromptTextarea.value = savedSysPrompt;
+
+const savedModel = localStorage.getItem('local_ai_model') || "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
 modelSelect.value = savedModel;
 
-// The core instruction that tells the AI to extract memory
+// Tab Switching Logic
+function switchView(viewId) {
+    chatView.classList.remove('active-view');
+    profileView.classList.remove('active-view');
+    sysPromptView.classList.remove('active-view');
+    document.getElementById(viewId).classList.add('active-view');
+}
+profileBtn.onclick = () => switchView('profile-view');
+sysPromptBtn.onclick = () => switchView('system-prompt-view');
+
+// Auto-save settings when user types
+profileTextarea.addEventListener('input', (e) => {
+    savedProfile = e.target.value;
+    localStorage.setItem('local_ai_profile_text', savedProfile);
+});
+sysPromptTextarea.addEventListener('input', (e) => {
+    savedSysPrompt = e.target.value;
+    localStorage.setItem('local_ai_sys_prompt_text', savedSysPrompt);
+});
+
+// Construct the master system instruction
 function getSystemPrompt() {
-    const memoryString = userProfile.length > 0 ? userProfile.join("; ") : "Nothing yet.";
+    const memoryContext = savedProfile.trim() ? `Here is what you know about the user: ${savedProfile}. ` : "";
+    const rules = `IMPORTANT RULE: If the user tells you a new fact about themselves, you must append exactly this format at the very end of your response: [MEMORY: fact here].`;
+    
     return {
         role: "system",
-        content: `You are a helpful, private AI assistant running locally. 
-        Here is what you currently know about the user: ${memoryString}. 
-        IMPORTANT RULE: If the user tells you a new, significant fact about themselves (e.g., their job, hobbies, name, or preferences), you must append exactly this format at the very end of your response: [MEMORY: fact here]. Otherwise, respond normally.`
+        content: `${savedSysPrompt}\n\n${memoryContext}\n${rules}`
     };
 }
 
@@ -62,18 +92,28 @@ modelSelect.addEventListener('change', async (e) => {
     localStorage.setItem('local_ai_model', newModel);
     if (engine) {
         statusMsg.textContent = "Unloading current model...";
-        // Engine handles unloading automatically when we create a new one
         await initAI(newModel); 
     }
 });
 
-function appendMessageToUI(role, text, id = null) {
+function appendMessageToUI(role, text, msgId = null, metricsHtml = "") {
+    const container = document.createElement('div');
+    container.className = `message-container ${role === 'user' ? 'user' : 'ai'}`;
+    
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role === 'user' ? 'user-msg' : 'ai-msg'}`;
     msgDiv.textContent = text;
-    if (id) msgDiv.id = id;
+    if (msgId) msgDiv.id = msgId;
+    container.appendChild(msgDiv);
     
-    chatMessages.appendChild(msgDiv);
+    if (metricsHtml) {
+        const metricsDiv = document.createElement('div');
+        metricsDiv.className = 'metrics';
+        metricsDiv.innerHTML = metricsHtml;
+        container.appendChild(metricsDiv);
+    }
+    
+    chatMessages.appendChild(container);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
@@ -86,22 +126,24 @@ function saveChatToLocal() {
 }
 
 function deleteChat(id, event) {
-    event.stopPropagation(); // Prevents loading the chat when clicking delete
+    event.stopPropagation(); 
     delete chats[id];
     localStorage.setItem('local_ai_chats', JSON.stringify(chats));
-    if (currentChatId === id) {
-        newChatBtn.click();
-    } else {
-        renderHistorySidebar();
-    }
+    if (currentChatId === id) newChatBtn.click();
+    else renderHistorySidebar();
 }
 
 function renderHistorySidebar() {
     historyList.innerHTML = '';
     Object.keys(chats).reverse().forEach(id => {
         const item = document.createElement('div');
-        item.className = 'history-item';
-        item.onclick = () => loadChat(id);
+        item.className = `history-item ${id === currentChatId ? 'active' : ''}`;
+        
+        // Clicking a chat switches to Chat View and loads it
+        item.onclick = () => {
+            switchView('chat-view');
+            loadChat(id);
+        };
         
         const titleSpan = document.createElement('span');
         titleSpan.className = 'chat-title';
@@ -126,32 +168,19 @@ function loadChat(id) {
     chatMessages.innerHTML = '';
     if (sysMsg) chatMessages.appendChild(sysMsg);
     
-    currentMessages.forEach(msg => appendMessageToUI(msg.role, msg.content));
+    currentMessages.forEach(msg => {
+        // We don't save the metrics string to memory to save space, so they only appear for new messages
+        appendMessageToUI(msg.role, msg.content);
+    });
+    renderHistorySidebar(); // Update active highlight
 }
 
 newChatBtn.onclick = () => {
+    switchView('chat-view');
     currentChatId = Date.now().toString();
     currentMessages = [];
     loadChat(currentChatId);
 };
-
-// Profile Modal Logic
-profileBtn.onclick = () => {
-    const list = document.getElementById('memory-list');
-    list.innerHTML = '';
-    if (userProfile.length === 0) {
-        list.innerHTML = '<li>Nothing recorded yet. Tell the AI about yourself!</li>';
-    } else {
-        userProfile.forEach(fact => {
-            const li = document.createElement('li');
-            li.textContent = fact;
-            list.appendChild(li);
-        });
-    }
-    profileModal.style.display = 'flex';
-};
-document.getElementById('close-modal-btn').onclick = () => profileModal.style.display = 'none';
-window.onclick = (e) => { if (e.target === profileModal) profileModal.style.display = 'none'; };
 
 sendBtn.onclick = async () => {
     const text = userInput.value.trim();
@@ -165,41 +194,46 @@ sendBtn.onclick = async () => {
     saveChatToLocal();
     
     const replyId = "reply-" + Date.now();
-    appendMessageToUI("assistant", "...", replyId);
+    // Create the container with the message and an empty metrics div below it
+    appendMessageToUI("assistant", "...", replyId, `<span id="metric-${replyId}">Generating...</span>`);
     const replyDiv = document.getElementById(replyId);
+    const metricSpan = document.getElementById(`metric-${replyId}`);
+    
+    const startTime = performance.now();
     
     try {
-        // Send System Prompt + ONLY the last 10 messages so the browser doesn't run out of RAM
-        const messagesToPass = [
-            getSystemPrompt(),
-            ...currentMessages.slice(-10) 
-        ];
-
-        const stream = await engine.chat.completions.create({
-            messages: messagesToPass,
-            stream: true,
-        });
+        const messagesToPass = [ getSystemPrompt(), ...currentMessages.slice(-10) ];
+        const stream = await engine.chat.completions.create({ messages: messagesToPass, stream: true });
         
         let replyText = "";
         for await (const chunk of stream) {
             replyText += chunk.choices[0]?.delta.content || "";
-            // Temporarily show everything, including the memory tag if it's generating it
             replyDiv.textContent = replyText;
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
         
-        // INTERCEPT MEMORY TAGS
+        // Calculate Metrics
+        const timeTakenSec = (performance.now() - startTime) / 1000;
+        // Estimate token count (roughly 4 characters per token)
+        const estTokens = Math.max(1, Math.round(replyText.length / 4));
+        const tps = (estTokens / timeTakenSec).toFixed(1);
+        metricSpan.textContent = `${estTokens} tokens • ${timeTakenSec.toFixed(1)}s • ${tps} tok/s`;
+        
+        // Auto-Memory Interception
         const memoryRegex = /\[MEMORY:\s*(.*?)\]/g;
         let match;
+        let memoryAdded = false;
         while ((match = memoryRegex.exec(replyText)) !== null) {
             const newFact = match[1].trim();
-            if (!userProfile.includes(newFact)) {
-                userProfile.push(newFact);
-                localStorage.setItem('local_ai_profile', JSON.stringify(userProfile));
+            if (!savedProfile.includes(newFact)) {
+                // Append it to the textarea
+                savedProfile += (savedProfile.length > 0 ? "\n" : "") + `- ${newFact}`;
+                profileTextarea.value = savedProfile;
+                localStorage.setItem('local_ai_profile_text', savedProfile);
+                memoryAdded = true;
             }
         }
         
-        // Remove the memory tags from the final text so the user doesn't see them
         const cleanReplyText = replyText.replace(/\[MEMORY:\s*(.*?)\]/g, '').trim();
         replyDiv.textContent = cleanReplyText;
 
@@ -207,6 +241,7 @@ sendBtn.onclick = async () => {
         saveChatToLocal();
     } catch (e) {
         replyDiv.textContent = "Error generating response. Try clearing chat or refreshing.";
+        metricSpan.textContent = "Failed";
     }
     
     userInput.disabled = false; sendBtn.disabled = false;
@@ -215,5 +250,4 @@ sendBtn.onclick = async () => {
 
 userInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendBtn.click(); });
 
-// Boot up
 initAI(savedModel);
