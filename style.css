@@ -1,0 +1,29 @@
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+body, html { height: 100%; background: #131314; color: #e3e3e3; }
+
+.container { display: flex; height: 100vh; overflow: hidden; }
+
+/* Left Sidebar */
+.sidebar { width: 280px; background: #1e1f20; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+.sidebar button { background: #2a2b2f; color: white; border: none; padding: 14px; border-radius: 8px; cursor: pointer; font-size: 16px; transition: background 0.2s;}
+.sidebar button:hover { background: #333538; }
+
+#history-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.history-item { padding: 12px; border-radius: 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px;}
+.history-item:hover { background: #2a2b2f; }
+
+/* Right Chat Area */
+.chat-area { flex: 1; display: flex; flex-direction: column; padding: 20px 40px; max-width: 1000px; margin: 0 auto; width: 100%;}
+
+#chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 24px; padding-bottom: 20px; }
+.message { max-width: 85%; padding: 14px 20px; border-radius: 20px; line-height: 1.6; font-size: 16px; white-space: pre-wrap; }
+.user-msg { background: #333538; align-self: flex-end; border-bottom-right-radius: 4px; }
+.ai-msg { background: #1e1f20; align-self: flex-start; border-bottom-left-radius: 4px; }
+.system-msg { align-self: center; color: #a8c7fa; font-size: 14px; background: none; }
+
+/* Input Bar */
+.input-area { display: flex; gap: 12px; background: #1e1f20; padding: 12px 24px; border-radius: 30px; margin-top: auto; margin-bottom: 20px; }
+input { flex: 1; background: transparent; border: none; color: white; outline: none; font-size: 16px; }
+input:disabled { opacity: 0.5; }
+#send-btn { background: #a8c7fa; color: #041e49; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+#send-btn:disabled { background: #444; color: #888; cursor: not-allowed; }
