@@ -12,12 +12,10 @@
       <button id="new-chat-btn" class="nav-btn">+ New Chat</button>
       <div id="history-list"></div>
       
-      <!-- Anchored to the bottom -->
       <div class="sidebar-footer">
         <select id="model-select" class="nav-btn">
-          <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Qwen 2.5 (0.5B) - Fastest</option>
-          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 (1B) - Fast</option>
-          <option value="Phi-3-mini-4k-instruct-q4f16_1-MLC">Phi-3 Mini - Smart</option>
+          <!-- The JS will dynamically populate the recent/default options here -->
+          <option value="explore_all">Explore all...</option>
         </select>
         <button id="profile-btn" class="nav-btn">User Profile</button>
         <button id="system-prompt-btn" class="nav-btn">System Prompt</button>
@@ -29,7 +27,10 @@
       <!-- VIEW 1: Chat Area -->
       <div id="chat-view" class="view-panel active-view">
         <div id="chat-messages">
-          <div class="message system-msg" id="status-msg">Initializing AI Engine...</div>
+          <div class="loading-container" id="loading-container">
+            <div class="message system-msg" id="status-msg">Initializing AI Engine...</div>
+            <button id="cancel-load-btn" style="display: none;">Cancel</button>
+          </div>
         </div>
         <div class="input-area">
           <input type="text" id="user-input" placeholder="Type a message..." disabled>
@@ -41,18 +42,35 @@
       <div id="profile-view" class="view-panel">
         <div class="settings-header">
           <h2>User Profile (Auto-Memory)</h2>
-          <p>The AI automatically adds things it learns about you here. You can also add, edit, or delete facts manually. It remembers this across all chats.</p>
+          <p>The AI automatically adds things it learns about you here. You can also edit it manually.</p>
         </div>
-        <textarea id="profile-textarea" placeholder="Example: My name is Alex. I am a web developer..."></textarea>
+        <textarea id="profile-textarea" placeholder="Example: My name is Alex..."></textarea>
       </div>
 
       <!-- VIEW 3: System Prompt Editor -->
       <div id="system-prompt-view" class="view-panel">
         <div class="settings-header">
           <h2>System Prompt</h2>
-          <p>Give the AI custom behavioral instructions (e.g., "Always speak like a pirate", "Keep answers under 2 sentences", "You are an expert coder").</p>
+          <p>Give the AI custom behavioral instructions (e.g., "Speak like a pirate").</p>
         </div>
-        <textarea id="system-prompt-textarea" placeholder="You are a helpful, private AI assistant..."></textarea>
+        <textarea id="system-prompt-textarea"></textarea>
+      </div>
+
+      <!-- VIEW 4: Model Explorer -->
+      <div id="explore-view" class="view-panel">
+        <div class="settings-header">
+          <h2>Model Explorer</h2>
+          <p>Browse and download local AI models. Models run entirely in your browser.</p>
+          <input type="text" id="model-search" placeholder="Search models (e.g., 'Llama', 'Fast')...">
+        </div>
+        
+        <div id="recent-models-section" style="display: none;">
+          <h3 class="section-title">Recently Used</h3>
+          <div class="model-grid" id="recent-models-grid"></div>
+        </div>
+        
+        <h3 class="section-title">All Models</h3>
+        <div class="model-grid" id="all-models-grid"></div>
       </div>
 
     </main>
