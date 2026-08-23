@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Private Local AI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <aside class="sidebar">
+      <button id="new-chat-btn">+ New Chat</button>
+      <div id="history-list"></div>
+    </aside>
+    
+    <main class="chat-area">
+      <div id="chat-messages">
+        <!-- The system message will show the model loading progress -->
+        <div class="message system-msg" id="status-msg">Initializing AI Engine...</div>
+      </div>
+      
+      <div class="input-area">
+        <input type="text" id="user-input" placeholder="Type a message..." disabled>
+        <button id="send-btn" disabled>Send</button>
+      </div>
+    </main>
+  </div>
+  
+  <!-- We use type="module" to allow ES6 imports -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
