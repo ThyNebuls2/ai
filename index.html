@@ -11,11 +11,20 @@
     <aside class="sidebar">
       <button id="new-chat-btn">+ New Chat</button>
       <div id="history-list"></div>
+      
+      <!-- New Sidebar Footer -->
+      <div class="sidebar-footer">
+        <select id="model-select">
+          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 (1B) - Fast</option>
+          <option value="Phi-3-mini-4k-instruct-q4f16_1-MLC">Phi-3 Mini - Smart</option>
+          <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Qwen 2.5 (1.5B) - Balanced</option>
+        </select>
+        <button id="profile-btn">User Profile</button>
+      </div>
     </aside>
     
     <main class="chat-area">
       <div id="chat-messages">
-        <!-- The system message will show the model loading progress -->
         <div class="message system-msg" id="status-msg">Initializing AI Engine...</div>
       </div>
       
@@ -25,8 +34,21 @@
       </div>
     </main>
   </div>
+
+  <!-- User Profile Modal -->
+  <div id="profile-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>What the AI remembers about you</h2>
+        <button id="close-modal-btn">&times;</button>
+      </div>
+      <ul id="memory-list"></ul>
+      <div style="margin-top: 15px; font-size: 12px; color: #aaa;">
+        The AI automatically extracts important facts as you chat and uses them across all conversations.
+      </div>
+    </div>
+  </div>
   
-  <!-- We use type="module" to allow ES6 imports -->
   <script type="module" src="app.js"></script>
 </body>
 </html>
