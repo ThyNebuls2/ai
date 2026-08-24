@@ -31,6 +31,7 @@ const removeAttachmentBtn = document.getElementById("remove-attachment-btn");
 const profileTextarea = document.getElementById("profile-textarea");
 const systemPromptTextarea = document.getElementById("system-prompt-textarea");
 const modelSearch = document.getElementById("model-search");
+const gpuUsageElement = document.getElementById("gpu-usage");
 
 // -----------------------------------------------------------------------------
 // State
@@ -643,7 +644,7 @@ sendBtn.onclick = async () => {
         "assistant",
         "...",
         replyId,
-        `<span id="${metricId}">${hasImages ? "Analysing Image: 0%" : "Generating..."}</span>`
+        `<span id="${metricId}">${hasImages ? thinkingDotsHtml() : "Generating..."}</span>`
     );
 
     const replyDiv = document.getElementById(replyId);
@@ -672,8 +673,7 @@ sendBtn.onclick = async () => {
             const attachment = jobs[index];
 
             if (attachment.isImage) {
-                metricSpan.textContent =
-                    `Analysing Image: ${Math.round((index / jobs.length) * 100)}%`;
+                metricSpan.innerHTML = thinkingDotsHtml();
                 await nextFrame();
             }
 
@@ -739,19 +739,7 @@ sendBtn.onclick = async () => {
                 chunkCount++;
 
                 if (attachment.isImage) {
-                    // WebLLM does not expose the private vision-encoder progress
-                    // counter, so this reflects actual streamed inference and
-                    // reserves completion for 100%.
-                    const localProgress = Math.min(95, Math.round(
-                        15 + 80 * (1 - Math.exp(-chunkCount / 16))
-                    ));
-
-                    const overall =
-                        (index / jobs.length) * 100 +
-                        localProgress / jobs.length;
-
-                    metricSpan.textContent =
-                        `Analysing Image: ${Math.round(overall)}%`;
+                    metricSpan.innerHTML = thinkingDotsHtml();
                 }
 
                 const visibleText = stripMemoryTagFromStream(replyText);
@@ -779,8 +767,7 @@ sendBtn.onclick = async () => {
             updateMemoryFromReply(replyText);
 
             if (attachment.isImage) {
-                metricSpan.textContent =
-                    `Analysing Image: ${Math.round(((index + 1) / jobs.length) * 100)}%`;
+                metricSpan.innerHTML = thinkingDotsHtml();
             }
         }
 
@@ -870,6 +857,34 @@ function updateMemoryFromReply(replyText) {
     }
 }
 
+function thinkingDotsHtml() {
+    return '<span class="thinking-dots" aria-label="Thinking"><span>.</span><span>.</span><span>.</span></span>';
+}
+
+async function updateGpuUsageIndicator() {
+    // The normal WebGPU API exposes adapter/device information, limits and
+    // supported features, but does not expose an exact current per-tab GPU
+    // utilisation percentage. We therefore never fake a number here.
+    if (!navigator.gpu) {
+        gpuUsageElement.textContent = "GPU usage: unavailable";
+        return;
+    }
+
+    try {
+        const adapter = await navigator.gpu.requestAdapter();
+        gpuUsageElement.textContent = adapter
+            ? "GPU usage: unavailable"
+            : "GPU usage: unavailable";
+    } catch (_) {
+        gpuUsageElement.textContent = "GPU usage: unavailable";
+    }
+}
+
+function startGpuUsageMonitor() {
+    updateGpuUsageIndicator();
+    setInterval(updateGpuUsageIndicator, 2000);
+}
+
 function nextFrame() {
     return new Promise(resolve => requestAnimationFrame(resolve));
 }
@@ -889,4 +904,5 @@ function escapeHtml(value) {
 updateModelSelectDropdown();
 renderModelExplorer();
 renderHistorySidebar();
+startGpuUsageMonitor();
 initAI(currentModel);
