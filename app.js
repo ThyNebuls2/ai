@@ -51,70 +51,16 @@ profileTextarea.value = savedProfile;
 systemPromptTextarea.value = savedSysPrompt;
 
 // -----------------------------------------------------------------------------
-// Model catalogue
-// We use WebLLM's own prebuilt registry. That means every selectable model is a
-// model that the exact WebLLM build in this app knows how to load.
+// Complete WebLLM model catalogue
+// Show every prebuilt chat/vision model shipped with this exact WebLLM build.
+// Embedding-only models are excluded because they are not chat models.
 // -----------------------------------------------------------------------------
 const PREBUILT_RECORDS = prebuiltAppConfig.model_list;
 const PREBUILT_BY_ID = new Map(PREBUILT_RECORDS.map(record => [record.model_id, record]));
 
-const BASE_MODEL_IDS = [
-    "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
-    "Llama-3.2-1B-Instruct-q4f16_1-MLC",
-    "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
-    "gemma-2-2b-it-q4f16_1-MLC",
-    "Llama-3.2-3B-Instruct-q4f16_1-MLC",
-    "Phi-3.5-mini-instruct-q4f16_1-MLC",
-    "Llama-3.1-8B-Instruct-q4f16_1-MLC"
-];
-
-// 20 additional current prebuilt models, selected for web practicality.
-// The two Phi-3.5 Vision variants are included separately below because they
-// are the vision-language models currently exposed by this WebLLM generation.
-const EXTRA_MODEL_IDS_PREFERRED = [
-    "Llama-3.2-1B-Instruct-q4f32_1-MLC",
-    "Llama-3.2-3B-Instruct-q4f32_1-MLC",
-    "Llama-3.1-8B-Instruct-q4f16_1-MLC-1k",
-    "Hermes-2-Theta-Llama-3-8B-q4f16_1-MLC",
-    "Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC",
-    "Hermes-3-Llama-3.2-3B-q4f16_1-MLC",
-    "Hermes-3-Llama-3.1-8B-q4f16_1-MLC",
-    "Hermes-2-Pro-Mistral-7B-q4f16_1-MLC",
-    "Phi-3.5-mini-instruct-q4f32_1-MLC-1k",
-    "Phi-4-mini-instruct-q4f16_1-MLC",
-    "Mistral-7B-Instruct-v0.3-q4f16_1-MLC",
-    "SmolLM2-1.7B-Instruct-q4f16_1-MLC",
-    "SmolLM2-360M-Instruct-q4f16_1-MLC",
-    "SmolLM2-135M-Instruct-q0f16-MLC",
-    "gemma-2-2b-it-q4f16_1-MLC-1k",
-    "Qwen2.5-0.5B-Instruct-q4f32_1-MLC",
-    "Qwen2.5-3B-Instruct-q4f16_1-MLC",
-    "Qwen2.5-3B-Instruct-q4f32_1-MLC",
-    "Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC",
-    "Qwen2.5-Math-1.5B-Instruct-q4f16_1-MLC"
-];
-
-const VISION_MODEL_IDS = PREBUILT_RECORDS
-    .filter(record => record.model_type === ModelType.VLM)
-    .map(record => record.model_id);
-
-// Always expose exactly 20 additional models when the WebLLM build contains
-// at least 20 candidates. The curated list is preferred; the remaining slots
-// are filled from the real prebuilt registry, never from guessed model IDs.
-const EXTRA_MODEL_IDS = [...new Set([
-    ...EXTRA_MODEL_IDS_PREFERRED.filter(id => PREBUILT_BY_ID.has(id)),
-    ...PREBUILT_RECORDS
-        .filter(record => !BASE_MODEL_IDS.includes(record.model_id))
-        .filter(record => !VISION_MODEL_IDS.includes(record.model_id))
-        .sort((a, b) => (a.vram_required_MB || Infinity) - (b.vram_required_MB || Infinity))
-        .map(record => record.model_id)
-])].slice(0, 20);
-
-const CATALOG_IDS = [...new Set([
-    ...BASE_MODEL_IDS,
-    ...EXTRA_MODEL_IDS,
-    ...VISION_MODEL_IDS
-])].filter(id => PREBUILT_BY_ID.has(id));
+const CATALOG_RECORDS = PREBUILT_RECORDS.filter(
+    record => record.model_type !== ModelType.embedding
+);
 
 function isVisionRecord(record) {
     return record?.model_type === ModelType.VLM;
@@ -125,40 +71,30 @@ function makeModelDescription(record) {
     if (isVisionRecord(record)) return "Vision-language model for image understanding and visual question answering.";
     if (id.includes("coder")) return "Code-focused model for programming and technical tasks.";
     if (id.includes("math")) return "Math-focused instruction model.";
-    if (id.includes("deepseek")) return "Reasoning-focused model; needs more memory than the small models.";
-    if (id.includes("smollm2-135m")) return "Extremely small model for very low-memory devices.";
-    if (id.includes("smollm2-360m")) return "Tiny model with a very small memory footprint.";
-    if (id.includes("smollm2")) return "Small, fast general-purpose model.";
-    if (id.includes("hermes")) return "Instruction-following model tuned for assistant-style conversations.";
-    if (id.includes("mistral")) return "Strong general-purpose instruction model; requires more memory.";
-    if (id.includes("gemma")) return "Google Gemma instruction model.";
-    if (id.includes("phi-4")) return "Compact modern reasoning and instruction model.";
-    if (id.includes("phi-3.5-mini")) return "Compact Microsoft instruction model.";
-    if (id.includes("qwen2.5-0.5b")) return "Very small Qwen model; excellent for low-memory devices.";
-    if (id.includes("qwen2.5-1.5b")) return "Small Qwen model with a good speed/intelligence balance.";
-    if (id.includes("qwen2.5-3b")) return "Balanced Qwen model for general tasks.";
-    if (id.includes("qwen2.5-7b")) return "Larger Qwen model with stronger reasoning and higher memory use.";
-    if (id.includes("llama-3.2-1b")) return "Fast compact Llama model.";
-    if (id.includes("llama-3.2-3b")) return "Balanced Llama model with stronger reasoning.";
-    if (id.includes("llama-3.1-8b")) return "Strong Llama model; requires substantially more memory.";
-    return "Local WebLLM model.";
+    if (id.includes("reasoning") || id.includes("deepseek")) return "Reasoning-focused model for more difficult tasks.";
+    if (id.includes("hermes")) return "Instruction-following assistant model.";
+    if (id.includes("mistral")) return "General-purpose instruction model.";
+    if (id.includes("phi")) return "Compact Microsoft model for general-purpose tasks.";
+    if (id.includes("qwen")) return "Qwen model for general-purpose language tasks.";
+    if (id.includes("llama")) return "Meta Llama model for general-purpose language tasks.";
+    if (id.includes("gemma")) return "Google Gemma model for general-purpose language tasks.";
+    if (id.includes("tinyllama")) return "Very small model designed for low-resource devices.";
+    return "Local WebLLM chat model.";
 }
 
-const ALL_MODELS = CATALOG_IDS.map(id => {
-    const record = PREBUILT_BY_ID.get(id);
-    return {
-        id,
-        name: record.model_id
-            .replace(/-q4f16_1-MLC(-1k)?$/i, "")
-            .replace(/-q4f32_1-MLC(-1k)?$/i, "")
-            .replace(/-q0f16-MLC(-1k)?$/i, "")
-            .replace(/-q0f32-MLC(-1k)?$/i, ""),
-        desc: makeModelDescription(record),
-        images: isVisionRecord(record),
-        lowResource: Boolean(record.low_resource_required),
-        vramMB: record.vram_required_MB || null
-    };
-});
+const ALL_MODELS = CATALOG_RECORDS.map(record => ({
+    id: record.model_id,
+    name: record.model_id
+        .replace(/-q4f16_1-MLC(-1k)?$/i, "")
+        .replace(/-q4f32_1-MLC(-1k)?$/i, "")
+        .replace(/-q0f16-MLC(-1k)?$/i, "")
+        .replace(/-q0f32-MLC(-1k)?$/i, ""),
+    desc: makeModelDescription(record),
+    images: isVisionRecord(record),
+    lowResource: Boolean(record.low_resource_required),
+    vramMB: record.vram_required_MB || null,
+    requiredFeatures: record.required_features || []
+}));
 
 function getModel(modelId) {
     return ALL_MODELS.find(model => model.id === modelId);
@@ -314,6 +250,7 @@ function createModelCard(model) {
         <h4>${escapeHtml(model.name)}</h4>
         <p>${escapeHtml(model.desc)}</p>
         ${model.images ? '<span class="model-capability">📷 supports images.</span>' : ""}
+        ${model.vramMB ? `<span class="model-resource">~${(model.vramMB / 1024).toFixed(1)} GB GPU memory</span>` : ""}
         ${model.lowResource ? '<span class="model-resource">✓ low-resource friendly</span>' : ""}
     `;
     card.onclick = () => {
@@ -393,35 +330,41 @@ function prepareImageFile(file) {
 
         image.onload = () => {
             try {
-                let width = image.naturalWidth || image.width;
-                let height = image.naturalHeight || image.height;
-                const MAX_DIMENSION = 448;
-                const scale = Math.min(1, MAX_DIMENSION / Math.max(width, height));
-                width = Math.max(1, Math.round(width * scale));
-                height = Math.max(1, Math.round(height * scale));
+                // Phi-3.5 Vision's processor resolves 1344x1008 (W x H) to
+                // 1921 image tokens. The transposed 1008x1344 case resolves
+                // to 1933 tokens and causes the compiled WebLLM model to fail.
+                const TARGET_WIDTH = 1344;
+                const TARGET_HEIGHT = 1008;
 
                 const canvas = document.createElement("canvas");
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext("2d", { alpha: false });
-                ctx.fillStyle = "#ffffff";
-                ctx.fillRect(0, 0, width, height);
-                ctx.drawImage(image, 0, 0, width, height);
+                canvas.width = TARGET_WIDTH;
+                canvas.height = TARGET_HEIGHT;
 
-                // JPEG keeps pasted PNG screenshots small enough for browser memory.
-                // If the first encode is still unusually large, make one more pass.
-                let dataUrl = canvas.toDataURL("image/jpeg", 0.78);
-                if (dataUrl.length > 220_000) {
-                    const smaller = document.createElement("canvas");
-                    const secondaryScale = 320 / Math.max(width, height);
-                    smaller.width = Math.max(1, Math.round(width * Math.min(1, secondaryScale)));
-                    smaller.height = Math.max(1, Math.round(height * Math.min(1, secondaryScale)));
-                    const smallCtx = smaller.getContext("2d", { alpha: false });
-                    smallCtx.fillStyle = "#ffffff";
-                    smallCtx.fillRect(0, 0, smaller.width, smaller.height);
-                    smallCtx.drawImage(image, 0, 0, smaller.width, smaller.height);
-                    dataUrl = smaller.toDataURL("image/jpeg", 0.70);
-                }
+                const ctx = canvas.getContext("2d", { alpha: false });
+                if (!ctx) throw new Error("Could not create image canvas.");
+
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, TARGET_WIDTH, TARGET_HEIGHT);
+
+                const scale = Math.min(
+                    TARGET_WIDTH / image.naturalWidth,
+                    TARGET_HEIGHT / image.naturalHeight
+                );
+
+                const drawWidth = Math.max(1, Math.round(image.naturalWidth * scale));
+                const drawHeight = Math.max(1, Math.round(image.naturalHeight * scale));
+                const offsetX = Math.round((TARGET_WIDTH - drawWidth) / 2);
+                const offsetY = Math.round((TARGET_HEIGHT - drawHeight) / 2);
+
+                ctx.drawImage(
+                    image,
+                    offsetX,
+                    offsetY,
+                    drawWidth,
+                    drawHeight
+                );
+
+                const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
 
                 resolve({
                     name: file.name || "pasted-image.jpg",
@@ -429,7 +372,11 @@ function prepareImageFile(file) {
                     data: dataUrl
                 });
             } catch (error) {
-                reject(new Error(`Could not process image: ${file.name || "pasted image"}`));
+                reject(
+                    new Error(
+                        `Could not process image: ${file.name || "pasted image"}`
+                    )
+                );
             } finally {
                 URL.revokeObjectURL(url);
             }
@@ -437,7 +384,11 @@ function prepareImageFile(file) {
 
         image.onerror = () => {
             URL.revokeObjectURL(url);
-            reject(new Error(`Could not read image: ${file.name || "pasted image"}`));
+            reject(
+                new Error(
+                    `Could not read image: ${file.name || "pasted image"}`
+                )
+            );
         };
 
         image.src = url;
@@ -625,7 +576,10 @@ newChatBtn.onclick = () => {
 // -----------------------------------------------------------------------------
 sendBtn.onclick = async () => {
     const rawInput = userInput.value.trim();
-    if ((!rawInput && !currentAttachedFiles.length) || !engine || isBusy) return;
+
+    if ((!rawInput && !currentAttachedFiles.length) || !engine || isBusy) {
+        return;
+    }
 
     const attachments = currentAttachedFiles.map(file => ({
         name: file.name,
@@ -634,8 +588,11 @@ sendBtn.onclick = async () => {
     }));
 
     const hasImages = attachments.some(file => file.isImage);
+
     if (hasImages && !isVisionModel(currentModel)) {
-        alert(`"${getModel(currentModel)?.name || currentModel}" does not support images. Select a model marked "📷 supports images." in Explore all models.`);
+        alert(
+            `"${getModel(currentModel)?.name || currentModel}" does not support images. Select a model marked "📷 supports images." in Explore all models.`
+        );
         return;
     }
 
@@ -643,9 +600,11 @@ sendBtn.onclick = async () => {
     setControlsEnabled(false);
 
     const displayText = rawInput || (
-        hasImages
-            ? `Please analyze ${attachments.filter(file => file.isImage).length > 1 ? "these images" : "this image"} in detail.`
-            : "Please analyze these files."
+        attachments.length > 1
+            ? "Please analyze the attached files."
+            : hasImages
+                ? "Please analyze this image in detail."
+                : "Please analyze this file."
     );
 
     const storedAttachments = attachments.map(file => ({
@@ -664,12 +623,22 @@ sendBtn.onclick = async () => {
 
     userInput.value = "";
     clearAttachments();
+
     currentMessages.push(messageObj);
-    appendMessageToUI("user", displayText, null, "", storedAttachments);
+
+    appendMessageToUI(
+        "user",
+        displayText,
+        null,
+        "",
+        storedAttachments
+    );
+
     saveChatToLocal();
 
     const replyId = `reply-${Date.now()}`;
     const metricId = `metric-${replyId}`;
+
     appendMessageToUI(
         "assistant",
         "...",
@@ -682,102 +651,181 @@ sendBtn.onclick = async () => {
     const startTime = performance.now();
 
     try {
-        const memCtx = savedProfile.trim() ? `User info: ${savedProfile}. ` : "";
-        const sysInstruction = `${savedSysPrompt}\n\n${memCtx}\nRULE: If the user tells you a new fact about themselves, silently append it at the very end of your response inside <memory> tags, exactly like <memory>fact</memory>.`;
+        const memCtx = savedProfile.trim()
+            ? `User info: ${savedProfile}. `
+            : "";
 
-        const parts = [];
-        if (rawInput) {
-            parts.push({ type: "text", text: rawInput });
-        } else if (hasImages) {
-            parts.push({
-                type: "text",
-                text: attachments.filter(file => file.isImage).length > 1
-                    ? "Analyze each attached image carefully. Discuss them separately and in order."
-                    : "Describe and analyze this image in detail."
-            });
-        } else {
-            parts.push({ type: "text", text: "Please analyze the attached files." });
-        }
+        const sysInstruction =
+            `${savedSysPrompt}\n\n${memCtx}` +
+            "RULE: If the user tells you a new fact about themselves, silently append it at the very end of your response inside <memory> tags, exactly like <memory>fact</memory>.";
 
-        for (const attachment of attachments) {
+        // Process each attachment independently. In Phi-3.5 Vision's compiled
+        // WebLLM path, one image already consumes ~1921 prefill tokens, leaving
+        // too little room to safely embed a second image in the same request.
+        const jobs = attachments.length
+            ? attachments
+            : [{ name: "", isImage: false, data: null }];
+
+        const outputs = [];
+
+        for (let index = 0; index < jobs.length; index++) {
+            const attachment = jobs[index];
+
+            if (attachment.isImage) {
+                metricSpan.textContent =
+                    `Analysing Image: ${Math.round((index / jobs.length) * 100)}%`;
+                await nextFrame();
+            }
+
+            const parts = [];
+
+            if (rawInput) {
+                parts.push({ type: "text", text: rawInput });
+            } else if (attachment.isImage) {
+                parts.push({
+                    type: "text",
+                    text: "Describe and analyze this image in detail."
+                });
+            } else if (attachment.data !== null) {
+                parts.push({
+                    type: "text",
+                    text: "Please analyze this attached file."
+                });
+            } else {
+                parts.push({
+                    type: "text",
+                    text: rawInput || "Hello."
+                });
+            }
+
             if (attachment.isImage) {
                 parts.push({
                     type: "image_url",
                     image_url: { url: attachment.data }
                 });
-            } else {
+            } else if (attachment.data !== null) {
                 parts.push({
                     type: "text",
-                    text: `\n\n--- Attached File: ${attachment.name} ---\n${attachment.data}\n--- End of File ---`
+                    text:
+                        `\n\n--- Attached File: ${attachment.name} ---\n${attachment.data}\n--- End of File ---`
                 });
             }
-        }
 
-        const currentPayload = hasImages ? parts : parts.map(part => part.text).join("");
-        const messagesForModel = currentMessages.slice(-10).map(message => {
-            if (message === messageObj) return { role: "user", content: currentPayload };
-            return { role: message.role, content: messageToModelContent(message) };
-        });
+            // Previous uploaded images are deliberately reduced to their text
+            // description in history. This guarantees one image maximum in the
+            // VLM request even on later turns of the same conversation.
+            const history = currentMessages
+                .slice(0, -1)
+                .slice(-10)
+                .map(message => ({
+                    role: message.role,
+                    content: messageToModelContent(message)
+                }));
 
-        if (hasImages) {
-            metricSpan.textContent = "Analysing Image: 15%";
-            await nextFrame();
-        }
+            const stream = await engine.chat.completions.create({
+                messages: [
+                    { role: "system", content: sysInstruction },
+                    ...history,
+                    { role: "user", content: parts }
+                ],
+                stream: true
+            });
 
-        const stream = await engine.chat.completions.create({
-            messages: [
-                { role: "system", content: sysInstruction },
-                ...messagesForModel
-            ],
-            stream: true
-        });
+            let replyText = "";
+            let chunkCount = 0;
 
-        let replyText = "";
-        let chunkCount = 0;
+            for await (const chunk of stream) {
+                replyText += chunk.choices[0]?.delta?.content || "";
+                chunkCount++;
 
-        for await (const chunk of stream) {
-            replyText += chunk.choices[0]?.delta?.content || "";
-            chunkCount++;
+                if (attachment.isImage) {
+                    // WebLLM does not expose the private vision-encoder progress
+                    // counter, so this reflects actual streamed inference and
+                    // reserves completion for 100%.
+                    const localProgress = Math.min(95, Math.round(
+                        15 + 80 * (1 - Math.exp(-chunkCount / 16))
+                    ));
 
-            if (hasImages) {
-                const progress = Math.min(
-                    97,
-                    Math.round(20 + 77 * (1 - Math.exp(-chunkCount / 16)))
-                );
-                metricSpan.textContent = `Analysing Image: ${progress}%`;
+                    const overall =
+                        (index / jobs.length) * 100 +
+                        localProgress / jobs.length;
+
+                    metricSpan.textContent =
+                        `Analysing Image: ${Math.round(overall)}%`;
+                }
+
+                const visibleText = stripMemoryTagFromStream(replyText);
+
+                if (jobs.length === 1) {
+                    replyDiv.textContent = visibleText;
+                } else {
+                    const liveOutputs = [...outputs, visibleText];
+                    replyDiv.textContent = liveOutputs
+                        .map((text, outputIndex) =>
+                            `### ${jobs[outputIndex].name || `Response ${outputIndex + 1}`}\n${text}`
+                        )
+                        .join("\n\n");
+                }
+
+                chatMessages.scrollTop = chatMessages.scrollHeight;
             }
 
-            replyDiv.textContent = stripMemoryTagFromStream(replyText);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            outputs.push(
+                replyText
+                    .replace(/<memory>[\s\S]*?<\/memory>/gi, "")
+                    .trim()
+            );
+
+            updateMemoryFromReply(replyText);
+
+            if (attachment.isImage) {
+                metricSpan.textContent =
+                    `Analysing Image: ${Math.round(((index + 1) / jobs.length) * 100)}%`;
+            }
         }
 
-        const timeSec = Math.max((performance.now() - startTime) / 1000, 0.001);
-        const estTokens = Math.max(1, Math.round(replyText.length / 4));
-        if (hasImages) {
-            metricSpan.textContent = "Analysing Image: 100%";
-        }
+        const finalReply = outputs
+            .map((text, index) =>
+                jobs.length === 1
+                    ? text
+                    : `### ${jobs[index].name || `Response ${index + 1}`}\n${text}`
+            )
+            .join("\n\n")
+            .trim();
 
-        const cleanReply = replyText.replace(/<memory>[\s\S]*?<\/memory>/gi, "").trim();
-        replyDiv.textContent = cleanReply || "(No text response returned.)";
+        replyDiv.textContent = finalReply || "(No text response returned.)";
 
-        if (hasImages) {
-            metricSpan.textContent = `Analysed • ${estTokens} tokens • ${timeSec.toFixed(1)}s`;
-        } else {
-            metricSpan.textContent = `${estTokens} tokens • ${timeSec.toFixed(1)}s • ${(estTokens / timeSec).toFixed(1)} tok/s`;
-        }
+        const timeSec = Math.max(
+            (performance.now() - startTime) / 1000,
+            0.001
+        );
 
-        updateMemoryFromReply(replyText);
+        const estTokens = Math.max(
+            1,
+            Math.round(finalReply.length / 4)
+        );
+
+        metricSpan.textContent = hasImages
+            ? `Analysed • ${estTokens} tokens • ${timeSec.toFixed(1)}s`
+            : `${estTokens} tokens • ${timeSec.toFixed(1)}s • ${(estTokens / timeSec).toFixed(1)} tok/s`;
 
         currentMessages.push({
             role: "assistant",
-            content: cleanReply,
-            displayContent: cleanReply
+            content: finalReply,
+            displayContent: finalReply
         });
+
         saveChatToLocal();
+
     } catch (error) {
         console.error(error);
-        replyDiv.textContent = `Generation failed: ${error?.message || "unknown error"}`;
-        metricSpan.textContent = hasImages ? "Image analysis failed" : "Generation failed";
+
+        replyDiv.textContent =
+            `Generation failed: ${error?.message || "unknown error"}`;
+
+        metricSpan.textContent = hasImages
+            ? "Image analysis failed"
+            : "Generation failed";
     } finally {
         isBusy = false;
         setControlsEnabled(Boolean(engine));
@@ -790,31 +838,21 @@ userInput.addEventListener("keypress", event => {
 });
 
 function messageToModelContent(message) {
-    if (message.role !== "user" || !message.attachments?.length) {
-        return message.content || message.displayContent || "";
+    if (message.role === "user" && message.attachments?.length) {
+        // Do not resend old image binaries to a Phi-3.5 Vision request. The
+        // current image is embedded separately; history stays text-only.
+        const prompt = message.promptText || message.displayContent || "";
+        const names = message.attachments
+            .map(attachment => attachment.name)
+            .filter(Boolean)
+            .join(", ");
+
+        return names
+            ? `${prompt}${prompt ? "\n" : ""}[Previously attached: ${names}]`
+            : prompt;
     }
 
-    const parts = [];
-    const prompt = message.promptText || "";
-    if (prompt) parts.push({ type: "text", text: prompt });
-
-    for (const attachment of message.attachments) {
-        if (attachment.isImage && attachment.data) {
-            parts.push({
-                type: "image_url",
-                image_url: { url: attachment.data }
-            });
-        } else if (!attachment.isImage && attachment.data) {
-            parts.push({
-                type: "text",
-                text: `\n\n--- Attached File: ${attachment.name} ---\n${attachment.data}\n--- End of File ---`
-            });
-        }
-    }
-
-    return parts.some(part => part.type === "image_url")
-        ? parts
-        : parts.map(part => part.text || "").join("");
+    return message.content || message.displayContent || "";
 }
 
 function stripMemoryTagFromStream(text) {
