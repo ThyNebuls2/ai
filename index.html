@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="gpu-usage" aria-live="polite">GPU usage: unavailable</div>
   <div class="container">
     <aside class="sidebar">
       <button id="new-chat-btn" class="nav-btn">+ New Chat</button>
@@ -78,13 +79,15 @@
           <input type="text" id="model-search" placeholder="Search models...">
         </div>
 
-        <div id="recent-models-section" style="display: none;">
-          <h3 class="section-title">Recently Used</h3>
-          <div class="model-grid" id="recent-models-grid"></div>
-        </div>
+        <div id="models-scroll-area" class="models-scroll-area">
+          <div id="recent-models-section" style="display: none;">
+            <h3 class="section-title">Recently Used</h3>
+            <div class="model-grid" id="recent-models-grid"></div>
+          </div>
 
-        <h3 class="section-title">All Models</h3>
-        <div class="model-grid" id="all-models-grid"></div>
+          <h3 class="section-title">All Models</h3>
+          <div class="model-grid" id="all-models-grid"></div>
+        </div>
       </div>
     </main>
   </div>
