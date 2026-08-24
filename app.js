@@ -4,8 +4,7 @@ const views = {
     chat: document.getElementById('chat-view'),
     profile: document.getElementById('profile-view'),
     system: document.getElementById('system-prompt-view'),
-    explore: document.getElementById('explore-view'),
-    visionExplore: document.getElementById('vision-explore-view')
+    explore: document.getElementById('explore-view')
 };
 const chatMessages = document.getElementById('chat-messages');
 const userInput = document.getElementById('user-input');
@@ -25,28 +24,38 @@ let currentChatId = Date.now().toString();
 let chats = JSON.parse(localStorage.getItem('local_ai_chats')) || {};
 let currentMessages = chats[currentChatId] || [];
 let cancelLoadingFlag = false;
-let currentAttachedFiles = []; // Now handles multiple files
+let currentAttachedFiles = [];
 
 let savedProfile = localStorage.getItem('local_ai_profile_text') || "";
 let savedSysPrompt = localStorage.getItem('local_ai_sys_prompt_text') || "You are a helpful, private AI assistant.";
 document.getElementById('profile-textarea').value = savedProfile;
 document.getElementById('system-prompt-textarea').value = savedSysPrompt;
 
-const TEXT_MODELS = [
-    { id: "SmolLM-135M-Instruct-q4f16_1-MLC", name: "SmolLM (135M)", desc: "Ultra-fast, instant responses." },
-    { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", name: "Qwen 2.5 (0.5B)", desc: "Lightning fast, tiny VRAM footprint." },
-    { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", name: "Llama 3.2 (1B)", desc: "Very fast and highly capable." }
+const ALL_MODELS = [
+    { id: "SmolLM-135M-Instruct-q4f16_1-MLC", name: "SmolLM (135M)", desc: "Ultra-fast, instant responses.", vision: false },
+    { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", name: "Qwen 2.5 (0.5B)", desc: "Lightning fast, tiny VRAM footprint.", vision: false },
+    { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", name: "Llama 3.2 (1B)", desc: "Very fast and highly capable.", vision: false },
+    { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", name: "Qwen 2.5 (1.5B)", desc: "Great balance of speed and intelligence.", vision: false },
+    { id: "Gemma-2-2b-it-q4f16_1-MLC", name: "Gemma 2 (2B)", desc: "Google's balanced open model.", vision: false },
+    { id: "Llama-3.2-3B-Instruct-q4f16_1-MLC", name: "Llama 3.2 (3B)", desc: "Excellent reasoning, requires decent GPU.", vision: false },
+    { id: "Phi-3.5-mini-instruct-q4f16_1-MLC", name: "Phi-3.5 Mini (3.8B)", desc: "Microsoft's capable reasoning model.", vision: false },
+    { id: "Llama-3.1-8B-Instruct-q4f16_1-MLC", name: "Llama 3.1 (8B)", desc: "Top tier reasoning, needs lots of RAM.", vision: false },
+    { id: "Mistral-7B-Instruct-v0.3-q4f16_1-MLC", name: "Mistral (7B)", desc: "Highly popular and robust 7B model.", vision: false },
+    
+    // Vision Models
+    { id: "Qwen2-VL-2B-Instruct-q4f16_1-MLC", name: "Qwen2-VL (2B)", desc: "Lightweight, fast. Supports image recognition.", vision: true },
+    { id: "Phi-3.5-vision-instruct-q4f16_1-MLC", name: "Phi-3.5 Vision (4B)", desc: "Great visual reasoning. Supports image recognition.", vision: true },
+    { id: "Qwen2-VL-7B-Instruct-q4f16_1-MLC", name: "Qwen2-VL (7B)", desc: "High quality vision. Supports image recognition.", vision: true },
+    { id: "Llama-3.2-11B-Vision-Instruct-q4f16_1-MLC", name: "Llama 3.2 Vision (11B)", desc: "Extremely powerful. Supports image recognition.", vision: true }
 ];
 
-const VISION_MODELS = [
-    { id: "Qwen2-VL-2B-Instruct-q4f16_1-MLC", name: "Qwen2-VL (2B)", desc: "Lightweight, fast image recognition." }
-];
-
-const ALL_MODELS = [...TEXT_MODELS, ...VISION_MODELS];
 let recentModels = JSON.parse(localStorage.getItem('local_ai_recent_models')) || ["SmolLM-135M-Instruct-q4f16_1-MLC"];
 let currentModel = localStorage.getItem('local_ai_model') || recentModels[0];
 
-function isVisionModel(modelId) { return VISION_MODELS.some(m => m.id === modelId); }
+function isVisionModel(modelId) { 
+    const m = ALL_MODELS.find(x => x.id === modelId);
+    return m ? m.vision : false; 
+}
 
 function switchView(viewName) {
     Object.values(views).forEach(v => v.classList.remove('active-view'));
@@ -54,10 +63,8 @@ function switchView(viewName) {
 }
 document.getElementById('profile-btn').onclick = () => switchView('profile');
 document.getElementById('system-prompt-btn').onclick = () => switchView('system');
-document.getElementById('vision-explore-btn').onclick = () => { switchView('visionExplore'); renderVisionExplorer(); };
 document.getElementById('clear-chat-btn').onclick = () => { currentMessages = []; chatMessages.innerHTML = ''; saveChatToLocal(); };
 
-// Listeners
 document.getElementById('profile-textarea').addEventListener('input', (e) => {
     savedProfile = e.target.value; localStorage.setItem('local_ai_profile_text', savedProfile);
 });
@@ -71,7 +78,7 @@ function updateModelSelectDropdown() {
         const m = ALL_MODELS.find(m => m.id === id);
         if (m) {
             const opt = document.createElement('option');
-            opt.value = id; opt.textContent = m.name + (isVisionModel(id) ? ' (Vision)' : '');
+            opt.value = id; opt.textContent = m.name;
             modelSelect.appendChild(opt);
         }
     });
@@ -110,7 +117,7 @@ async function initAI(modelId) {
 }
 cancelLoadBtn.onclick = () => { cancelLoadingFlag = true; if (engine) engine.unload(); };
 modelSelect.addEventListener('change', (e) => {
-    if (e.target.value === "explore_all") { switchView('explore'); renderTextExplorer(); e.target.value = currentModel; } 
+    if (e.target.value === "explore_all") { switchView('explore'); renderExplorer(); e.target.value = currentModel; } 
     else { switchView('chat'); initAI(e.target.value); }
 });
 
@@ -121,17 +128,35 @@ function createModelCard(model) {
     card.onclick = () => { switchView('chat'); initAI(model.id); };
     return card;
 }
-function renderTextExplorer(filterText = "") { /* Implementation remains identical */ }
-function renderVisionExplorer() { /* Implementation remains identical */ }
 
-// --- FILE UPLOAD & CLIPBOARD ---
+function renderExplorer(filterText = "") {
+    const recentGrid = document.getElementById('recent-models-grid');
+    const allGrid = document.getElementById('all-models-grid');
+    const recentSection = document.getElementById('recent-models-section');
+    recentGrid.innerHTML = ''; allGrid.innerHTML = '';
+    
+    if (recentModels.length > 0 && !filterText) {
+        recentSection.style.display = 'block';
+        recentModels.forEach(id => {
+            const m = ALL_MODELS.find(m => m.id === id);
+            if(m) recentGrid.appendChild(createModelCard(m));
+        });
+    } else {
+        recentSection.style.display = 'none';
+    }
+
+    ALL_MODELS.filter(m => m.name.toLowerCase().includes(filterText.toLowerCase()) || m.desc.toLowerCase().includes(filterText.toLowerCase()))
+        .forEach(m => allGrid.appendChild(createModelCard(m)));
+}
+document.getElementById('model-search').addEventListener('input', (e) => renderExplorer(e.target.value));
+
 attachBtn.onclick = () => fileUpload.click();
 
 async function processFile(file) {
     const isImage = file.type.startsWith('image/');
     if (isImage && !isVisionModel(currentModel)) {
-        if (confirm("Uploading an image requires the vision model. Load it now?")) {
-            switchView('chat'); await initAI(VISION_MODELS[0].id);
+        if (confirm("Uploading an image requires a vision model. Load one now?")) {
+            switchView('chat'); await initAI("Qwen2-VL-2B-Instruct-q4f16_1-MLC");
         } else return null;
     }
     
@@ -190,7 +215,6 @@ document.addEventListener('paste', async (e) => {
     updateAttachmentUI();
 });
 
-// --- CHAT LOGIC ---
 function appendMessageToUI(role, text, msgId = null, metricsHtml = "", attachments = []) {
     const container = document.createElement('div');
     container.className = `message-container ${role === 'user' ? 'user' : 'ai'}`;
@@ -216,8 +240,45 @@ function appendMessageToUI(role, text, msgId = null, metricsHtml = "", attachmen
 }
 
 function saveChatToLocal() { if (currentMessages.length > 0) { chats[currentChatId] = currentMessages; localStorage.setItem('local_ai_chats', JSON.stringify(chats)); renderHistorySidebar(); } }
-function renderHistorySidebar() { /* Implementation remains identical */ }
-function loadChat(id) { /* Implementation remains identical */ }
+
+function renderHistorySidebar() {
+    historyList.innerHTML = '';
+    Object.keys(chats).reverse().forEach(id => {
+        const item = document.createElement('div');
+        item.className = `history-item ${id === currentChatId ? 'active' : ''}`;
+        item.onclick = () => { switchView('chat'); loadChat(id); };
+        
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'chat-title';
+        let firstMsgText = chats[id][0]?.displayContent || "New Chat";
+        titleSpan.textContent = firstMsgText;
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.innerHTML = '&times;';
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation(); 
+            delete chats[id]; localStorage.setItem('local_ai_chats', JSON.stringify(chats));
+            if (currentChatId === id) newChatBtn.click(); else renderHistorySidebar();
+        };
+        item.appendChild(titleSpan); item.appendChild(deleteBtn); historyList.appendChild(item);
+    });
+}
+
+function loadChat(id) {
+    currentChatId = id; currentMessages = chats[id] || [];
+    chatMessages.innerHTML = ''; chatMessages.appendChild(loadingContainer);
+    
+    currentMessages.forEach(msg => {
+        if (msg.role === "user" && msg.attachments) {
+            appendMessageToUI(msg.role, msg.displayContent, null, "", msg.attachments);
+        } else {
+            appendMessageToUI(msg.role, msg.displayContent || msg.content);
+        }
+    });
+    renderHistorySidebar();
+}
+
 newChatBtn.onclick = () => { switchView('chat'); currentChatId = Date.now().toString(); currentMessages = []; loadChat(currentChatId); };
 
 sendBtn.onclick = async () => {
