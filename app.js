@@ -1,12 +1,6 @@
-import {
-    CreateMLCEngine,
-    ModelType,
-    prebuiltAppConfig
-} from "https://esm.run/@mlc-ai/web-llm@0.2.82";
+import { CreateMLCEngine, prebuiltAppConfig, ModelType } from "https://esm.run/@mlc-ai/web-llm";
 
-// -----------------------------------------------------------------------------
-// DOM
-// -----------------------------------------------------------------------------
+// --- DOM Elements ---
 const views = {
     chat: document.getElementById("chat-view"),
     profile: document.getElementById("profile-view"),
@@ -23,116 +17,187 @@ const statusMsg = document.getElementById("status-msg");
 const cancelLoadBtn = document.getElementById("cancel-load-btn");
 const loadingContainer = document.getElementById("loading-container");
 const modelSelect = document.getElementById("model-select");
+
 const attachBtn = document.getElementById("attach-btn");
 const fileUpload = document.getElementById("file-upload");
 const attachmentPreview = document.getElementById("attachment-preview");
 const attachmentList = document.getElementById("attachment-list");
 const removeAttachmentBtn = document.getElementById("remove-attachment-btn");
-const profileTextarea = document.getElementById("profile-textarea");
-const systemPromptTextarea = document.getElementById("system-prompt-textarea");
-const modelSearch = document.getElementById("model-search");
-const gpuUsageElement = document.getElementById("gpu-usage");
 
-// -----------------------------------------------------------------------------
-// State
-// -----------------------------------------------------------------------------
+// --- Global State ---
 let engine = null;
-let isBusy = false;
-let cancelLoadingFlag = false;
 let currentChatId = Date.now().toString();
-let chats = JSON.parse(localStorage.getItem("local_ai_chats") || "{}");
+let chats = JSON.parse(localStorage.getItem("local_ai_chats")) || {};
 let currentMessages = chats[currentChatId] || [];
-let currentAttachedFiles = [];
+let cancelLoadingFlag = false;
 
+let currentAttachedFiles = [];
+let isBusy = false;
+
+// --- Settings ---
 let savedProfile = localStorage.getItem("local_ai_profile_text") || "";
 let savedSysPrompt = localStorage.getItem("local_ai_sys_prompt_text") ||
     "You are a helpful, private AI assistant.";
 
-profileTextarea.value = savedProfile;
-systemPromptTextarea.value = savedSysPrompt;
+document.getElementById("profile-textarea").value = savedProfile;
+document.getElementById("system-prompt-textarea").value = savedSysPrompt;
 
-// -----------------------------------------------------------------------------
-// Complete WebLLM model catalogue
-// Show every prebuilt chat/vision model shipped with this exact WebLLM build.
-// Embedding-only models are excluded because they are not chat models.
-// -----------------------------------------------------------------------------
-const PREBUILT_RECORDS = prebuiltAppConfig.model_list;
-const PREBUILT_BY_ID = new Map(PREBUILT_RECORDS.map(record => [record.model_id, record]));
+// --- Model Catalog ----------------------------------------------------------
+// Use WebLLM's own registry as the source of truth. This means the explorer
+// shows every prebuilt conversational model exposed by the WebLLM version
+// currently loaded by the page, including VLMs such as Ministral when present.
+const REGISTRY = Array.isArray(prebuiltAppConfig?.model_list)
+    ? prebuiltAppConfig.model_list
+    : [];
 
-const CATALOG_RECORDS = PREBUILT_RECORDS.filter(
-    record => record.model_type !== ModelType.embedding
-);
+const enumVLM = ModelType?.VLM;
 
 function isVisionRecord(record) {
-    return record?.model_type === ModelType.VLM;
+    if (!record) return false;
+    if (record.model_type === enumVLM) return true;
+
+    // Fallback for registries which omit model_type on a known VLM family.
+    const id = String(record.model_id || "").toLowerCase();
+    return /vision|vlm|ministral-3-/.test(id);
 }
 
-function makeModelDescription(record) {
-    const id = record.model_id.toLowerCase();
-    if (isVisionRecord(record)) return "Vision-language model for image understanding and visual question answering.";
-    if (id.includes("coder")) return "Code-focused model for programming and technical tasks.";
-    if (id.includes("math")) return "Math-focused instruction model.";
-    if (id.includes("reasoning") || id.includes("deepseek")) return "Reasoning-focused model for more difficult tasks.";
+function estimateMissingVRAM(record) {
+    if (Number.isFinite(record?.vram_required_MB)) {
+        return {
+            value: Number(record.vram_required_MB),
+            estimated: false,
+            source: "WebLLM"
+        };
+    }
+
+    const id = String(record?.model_id || "").toLowerCase();
+
+    // Mistral documents the Ministral 3 3B BF16 family as fitting in ~16 GB
+    // of VRAM. WebLLM does not currently populate vram_required_MB for these
+    // records, so show this as an estimate rather than an exact registry value.
+    if (
+        /ministral-3-3b-(base-2512|reasoning-2512|instruct-2512-bf16)/i.test(
+            record?.model_id || ""
+        )
+    ) {
+        return {
+            value: 16384,
+            estimated: true,
+            source: "Mistral published requirement"
+        };
+    }
+
+    // Generic last-resort estimate from model size/precision. This is only
+    // used when a registry record has no VRAM figure at all.
+    const billionMatch = id.match(/(?:-|^)(\d+(?:\.\d+)?)b(?:-|_|$)/i);
+    const billions = billionMatch ? Number(billionMatch[1]) : null;
+
+    if (billions) {
+        let bytesPerParameter = 0.5;
+        if (/bf16|f16|fp16/.test(id)) bytesPerParameter = 2;
+        else if (/q8|int8/.test(id)) bytesPerParameter = 1;
+        else if (/q6/.test(id)) bytesPerParameter = 0.78;
+        else if (/q5/.test(id)) bytesPerParameter = 0.68;
+        else if (/q4/.test(id)) bytesPerParameter = 0.55;
+        else if (/q3/.test(id)) bytesPerParameter = 0.45;
+        else if (/q2/.test(id)) bytesPerParameter = 0.36;
+
+        // Leave room for runtime/KV cache beyond the raw weights.
+        const weightsMB = billions * 1000 * bytesPerParameter;
+        const runtimeMB = Math.max(256, weightsMB * 0.18);
+        return {
+            value: Math.ceil(weightsMB + runtimeMB),
+            estimated: true,
+            source: "calculated estimate"
+        };
+    }
+
+    return null;
+}
+
+function modelDisplayName(record) {
+    return String(record.model_id || "Unknown model")
+        .replace(/-q[0-9a-z_]+(?:-MLC)?(?:-\d+k)?$/i, "")
+        .replace(/-MLC$/i, "")
+        .replace(/_/g, " ");
+}
+
+function modelDescription(record) {
+    const id = String(record.model_id || "").toLowerCase();
+
+    if (isVisionRecord(record)) {
+        return "Vision-language model capable of understanding images alongside text.";
+    }
+    if (id.includes("coder")) return "Code-focused local model for programming and technical tasks.";
+    if (id.includes("math")) return "Math-focused local instruction model.";
+    if (id.includes("reasoning") || id.includes("r1")) return "Reasoning-focused local model.";
+    if (id.includes("smollm")) return "Small, fast model designed for lower-memory devices.";
     if (id.includes("hermes")) return "Instruction-following assistant model.";
-    if (id.includes("mistral")) return "General-purpose instruction model.";
-    if (id.includes("phi")) return "Compact Microsoft model for general-purpose tasks.";
-    if (id.includes("qwen")) return "Qwen model for general-purpose language tasks.";
-    if (id.includes("llama")) return "Meta Llama model for general-purpose language tasks.";
-    if (id.includes("gemma")) return "Google Gemma model for general-purpose language tasks.";
-    if (id.includes("tinyllama")) return "Very small model designed for low-resource devices.";
-    return "Local WebLLM chat model.";
+    if (id.includes("gemma")) return "Google Gemma model for general-purpose tasks.";
+    if (id.includes("phi")) return "Microsoft Phi model for compact local inference.";
+    if (id.includes("qwen")) return "Qwen family model for general-purpose local inference.";
+    if (id.includes("llama")) return "Meta Llama model for general-purpose local inference.";
+    if (id.includes("ministral")) return "Mistral Ministral model designed for efficient edge/local inference.";
+    return "Local WebLLM model.";
 }
 
-const ALL_MODELS = CATALOG_RECORDS.map(record => ({
-    id: record.model_id,
-    name: record.model_id
-        .replace(/-q4f16_1-MLC(-1k)?$/i, "")
-        .replace(/-q4f32_1-MLC(-1k)?$/i, "")
-        .replace(/-q0f16-MLC(-1k)?$/i, "")
-        .replace(/-q0f32-MLC(-1k)?$/i, ""),
-    desc: makeModelDescription(record),
-    images: isVisionRecord(record),
-    lowResource: Boolean(record.low_resource_required),
-    vramMB: record.vram_required_MB || null,
-    requiredFeatures: record.required_features || []
-}));
+const ALL_MODELS = REGISTRY
+    .filter(record => record && record.model_type !== ModelType.embedding)
+    .map(record => {
+        const memory = estimateMissingVRAM(record);
+        return {
+            id: record.model_id,
+            name: modelDisplayName(record),
+            desc: modelDescription(record),
+            images: isVisionRecord(record),
+            vramMB: memory?.value ?? null,
+            vramEstimated: memory?.estimated ?? false,
+            vramSource: memory?.source ?? null,
+            lowResource: Boolean(record.low_resource_required),
+            requiredFeatures: Array.isArray(record.required_features)
+                ? record.required_features
+                : []
+        };
+    });
 
 function getModel(modelId) {
-    return ALL_MODELS.find(model => model.id === modelId);
+    return ALL_MODELS.find(m => m.id === modelId);
 }
 
 function isVisionModel(modelId) {
     return Boolean(getModel(modelId)?.images);
 }
 
-let recentModels = JSON.parse(localStorage.getItem("local_ai_recent_models") || "[]")
+let recentModels = (JSON.parse(localStorage.getItem("local_ai_recent_models")) || [])
     .filter(id => getModel(id));
 
 let currentModel = localStorage.getItem("local_ai_model");
+
 if (!getModel(currentModel)) {
-    currentModel = recentModels[0] ||
-        BASE_MODEL_IDS.find(id => getModel(id)) ||
-        ALL_MODELS[0]?.id;
+    currentModel = recentModels[0] || ALL_MODELS[0]?.id;
+    if (currentModel) {
+        localStorage.setItem("local_ai_model", currentModel);
+    }
 }
 
-// -----------------------------------------------------------------------------
-// Navigation / settings
-// -----------------------------------------------------------------------------
-function switchView(name) {
-    Object.values(views).forEach(view => view.classList.remove("active-view"));
-    views[name].classList.add("active-view");
+let currentModelSort = "alphabetical";
+
+// --- View/UI ---
+function switchView(viewName) {
+    Object.values(views).forEach(v => v.classList.remove("active-view"));
+    views[viewName].classList.add("active-view");
 }
 
 document.getElementById("profile-btn").onclick = () => switchView("profile");
 document.getElementById("system-prompt-btn").onclick = () => switchView("system");
 
-profileTextarea.addEventListener("input", event => {
-    savedProfile = event.target.value;
+document.getElementById("profile-textarea").addEventListener("input", (e) => {
+    savedProfile = e.target.value;
     localStorage.setItem("local_ai_profile_text", savedProfile);
 });
 
-systemPromptTextarea.addEventListener("input", event => {
-    savedSysPrompt = event.target.value;
+document.getElementById("system-prompt-textarea").addEventListener("input", (e) => {
+    savedSysPrompt = e.target.value;
     localStorage.setItem("local_ai_sys_prompt_text", savedSysPrompt);
 });
 
@@ -142,18 +207,72 @@ function updateModelSelectDropdown() {
     recentModels.slice(0, 3).forEach(id => {
         const model = getModel(id);
         if (!model) return;
-        const option = document.createElement("option");
-        option.value = id;
-        option.textContent = model.name + (model.images ? " • 📷" : "");
-        modelSelect.appendChild(option);
+
+        const opt = document.createElement("option");
+        opt.value = id;
+        opt.textContent = model.name + (model.images ? " • Images" : "");
+        modelSelect.appendChild(opt);
     });
 
-    const explore = document.createElement("option");
-    explore.value = "explore_all";
-    explore.textContent = "Explore all models...";
-    modelSelect.appendChild(explore);
+    const exploreOpt = document.createElement("option");
+    exploreOpt.value = "explore_all";
+    exploreOpt.textContent = "Explore all models...";
+    modelSelect.appendChild(exploreOpt);
 
     modelSelect.value = currentModel;
+}
+
+// --- AI Loading ---
+async function initAI(modelId) {
+    cancelLoadingFlag = false;
+    currentModel = modelId;
+    localStorage.setItem("local_ai_model", currentModel);
+
+    recentModels = [modelId, ...recentModels.filter(id => id !== modelId)].slice(0, 5);
+    localStorage.setItem("local_ai_recent_models", JSON.stringify(recentModels));
+    updateModelSelectDropdown();
+
+    const model = getModel(modelId);
+    statusMsg.textContent = `Preparing ${model?.name || modelId}...`;
+    statusMsg.style.color = "#f5c542";
+    cancelLoadBtn.style.display = "block";
+    chatMessages.appendChild(loadingContainer);
+
+    setControlsEnabled(false);
+
+    try {
+        if (engine) {
+            await engine.unload();
+            engine = null;
+        }
+
+        engine = await CreateMLCEngine(modelId, {
+            initProgressCallback: (progress) => {
+                if (cancelLoadingFlag) throw new Error("LoadCancelledByUser");
+                const percent = Math.round(progress.progress * 100);
+                statusMsg.textContent = `Downloading/Loading: ${percent}%`;
+                statusMsg.style.color = "#f5c542";
+            }
+        });
+
+        statusMsg.textContent = `${model?.name || modelId} loaded. Ready when you are!`;
+        statusMsg.style.color = "#f5c542";
+        cancelLoadBtn.style.display = "none";
+        setControlsEnabled(true);
+        renderHistorySidebar();
+        loadChat(currentChatId);
+    } catch (error) {
+        if (error.message === "LoadCancelledByUser") {
+            statusMsg.textContent = "Loading cancelled. Select a model to start.";
+            statusMsg.style.color = "#aaa";
+        } else {
+            statusMsg.textContent = `Error: ${error.message}`;
+            statusMsg.style.color = "#ff8a8a";
+        }
+        cancelLoadBtn.style.display = "none";
+        engine = null;
+        setControlsEnabled(false);
+    }
 }
 
 function setControlsEnabled(enabled) {
@@ -163,271 +282,246 @@ function setControlsEnabled(enabled) {
     attachBtn.disabled = disabled;
 }
 
-// -----------------------------------------------------------------------------
-// WebLLM loading
-// -----------------------------------------------------------------------------
-async function initAI(modelId) {
-    if (!getModel(modelId)) return;
-
-    cancelLoadingFlag = false;
-    currentModel = modelId;
-    localStorage.setItem("local_ai_model", currentModel);
-    recentModels = [modelId, ...recentModels.filter(id => id !== modelId)].slice(0, 8);
-    localStorage.setItem("local_ai_recent_models", JSON.stringify(recentModels));
-    updateModelSelectDropdown();
-
-    const model = getModel(modelId);
-    statusMsg.textContent = `Preparing ${model.name}...`;
-    statusMsg.style.color = "var(--yellow)";
-    cancelLoadBtn.style.display = "block";
-    chatMessages.appendChild(loadingContainer);
-    setControlsEnabled(false);
-
-    try {
-        if (engine) {
-            await engine.unload();
-            engine = null;
-        }
-
-        // Keep the app configuration tied to the exact WebLLM package version.
-        engine = await CreateMLCEngine(modelId, {
-            appConfig: {
-                ...prebuiltAppConfig,
-                model_list: prebuiltAppConfig.model_list
-            },
-            initProgressCallback: progress => {
-                if (cancelLoadingFlag) throw new Error("LoadCancelledByUser");
-                const percent = Math.round((progress.progress || 0) * 100);
-                statusMsg.textContent = `Downloading/Loading: ${percent}%`;
-                statusMsg.style.color = "var(--yellow)";
-            }
-        });
-
-        statusMsg.textContent = `${model.name} loaded. Ready when you are!`;
-        statusMsg.style.color = "var(--yellow)";
-        cancelLoadBtn.style.display = "none";
-        setControlsEnabled(true);
-        renderHistorySidebar();
-        loadChat(currentChatId);
-    } catch (error) {
-        statusMsg.textContent = error.message === "LoadCancelledByUser"
-            ? "Loading cancelled. Select a model to start."
-            : `Error: ${error.message}`;
-        statusMsg.style.color = error.message === "LoadCancelledByUser" ? "#aaa" : "#ff8a8a";
-        cancelLoadBtn.style.display = "none";
-        engine = null;
-        setControlsEnabled(false);
-        console.error(error);
-    }
-}
-
 cancelLoadBtn.onclick = async () => {
     cancelLoadingFlag = true;
     try {
         if (engine) await engine.unload();
     } catch (_) {}
     engine = null;
-    setControlsEnabled(false);
 };
 
-modelSelect.addEventListener("change", event => {
-    if (event.target.value === "explore_all") {
+// Model selector now opens one combined model explorer.
+modelSelect.addEventListener("change", (e) => {
+    if (e.target.value === "explore_all") {
         switchView("explore");
         renderModelExplorer();
-        event.target.value = currentModel;
-        return;
+        e.target.value = currentModel;
+    } else {
+        switchView("chat");
+        initAI(e.target.value);
     }
-    switchView("chat");
-    initAI(event.target.value);
 });
 
-// -----------------------------------------------------------------------------
-// Model explorer
-// -----------------------------------------------------------------------------
+// --- Model Explorer ---------------------------------------------------------
+function formatVRAM(model) {
+    if (!Number.isFinite(model.vramMB)) {
+        return '<span class="model-resource">GPU memory: not specified by WebLLM</span>';
+    }
+
+    const gb = model.vramMB / 1024;
+    const estimateText = model.vramEstimated ? " (estimated)" : "";
+    return `<span class="model-resource">GPU memory: ~${gb.toFixed(1)} GB${estimateText}</span>`;
+}
+
 function createModelCard(model) {
     const card = document.createElement("div");
     card.className = "model-card";
+
+    const imageSupport = model.images
+        ? '<span class="model-capability">📷 supports images.</span>'
+        : "";
+
+    const lowResource = model.lowResource
+        ? '<span class="model-resource">✓ low-resource friendly</span>'
+        : "";
+
+    const features = model.requiredFeatures.length
+        ? `<span class="model-resource">Requires: ${escapeHtml(model.requiredFeatures.join(", "))}</span>`
+        : "";
+
     card.innerHTML = `
         <h4>${escapeHtml(model.name)}</h4>
         <p>${escapeHtml(model.desc)}</p>
-        ${model.images ? '<span class="model-capability">📷 supports images.</span>' : ""}
-        ${model.vramMB ? `<span class="model-resource">~${(model.vramMB / 1024).toFixed(1)} GB GPU memory</span>` : ""}
-        ${model.lowResource ? '<span class="model-resource">✓ low-resource friendly</span>' : ""}
+        ${imageSupport}
+        ${formatVRAM(model)}
+        ${lowResource}
+        ${features}
     `;
+
     card.onclick = () => {
         switchView("chat");
         initAI(model.id);
     };
+
     return card;
+}
+
+function sortModels(models, sortMode) {
+    const copy = [...models];
+
+    switch (sortMode) {
+        case "gpu_low":
+            return copy.sort((a, b) => {
+                const av = Number.isFinite(a.vramMB) ? a.vramMB : Infinity;
+                const bv = Number.isFinite(b.vramMB) ? b.vramMB : Infinity;
+                return av - bv || a.name.localeCompare(b.name);
+            });
+
+        case "gpu_high":
+            return copy.sort((a, b) => {
+                const av = Number.isFinite(a.vramMB) ? a.vramMB : -Infinity;
+                const bv = Number.isFinite(b.vramMB) ? b.vramMB : -Infinity;
+                return bv - av || a.name.localeCompare(b.name);
+            });
+
+        case "images_first":
+            return copy.sort((a, b) => {
+                if (a.images !== b.images) return Number(b.images) - Number(a.images);
+                return a.name.localeCompare(b.name);
+            });
+
+        case "alphabetical":
+        default:
+            return copy.sort((a, b) => a.name.localeCompare(b.name));
+    }
 }
 
 function renderModelExplorer(filterText = "") {
     const recentGrid = document.getElementById("recent-models-grid");
     const allGrid = document.getElementById("all-models-grid");
     const recentSection = document.getElementById("recent-models-section");
-    const search = filterText.trim().toLowerCase();
 
     recentGrid.innerHTML = "";
     allGrid.innerHTML = "";
 
-    const filtered = ALL_MODELS.filter(model => {
-        if (!search) return true;
-        return model.name.toLowerCase().includes(search) ||
-            model.desc.toLowerCase().includes(search) ||
-            (model.images && "image vision camera".includes(search));
-    });
+    const text = filterText.toLowerCase().trim();
+    const filtered = ALL_MODELS.filter(m =>
+        m.name.toLowerCase().includes(text) ||
+        m.desc.toLowerCase().includes(text) ||
+        (m.images && "images vision image camera".includes(text))
+    );
 
     const recent = recentModels
         .map(id => getModel(id))
         .filter(Boolean)
-        .filter(model => !search || filtered.includes(model));
+        .filter(m => !text || filtered.includes(m));
 
-    recentSection.style.display = recent.length && !search ? "block" : "none";
-    recent.forEach(model => recentGrid.appendChild(createModelCard(model)));
-    filtered.forEach(model => allGrid.appendChild(createModelCard(model)));
+    if (recent.length > 0 && !text) {
+        recentSection.style.display = "block";
+        recent.forEach(m => recentGrid.appendChild(createModelCard(m)));
+    } else {
+        recentSection.style.display = "none";
+    }
+
+    const sorted = sortModels(filtered, currentModelSort);
+    sorted.forEach(m => allGrid.appendChild(createModelCard(m)));
 }
 
-modelSearch.addEventListener("input", event => renderModelExplorer(event.target.value));
+document.getElementById("model-search").addEventListener("input", (e) => {
+    renderModelExplorer(e.target.value);
+});
 
-// -----------------------------------------------------------------------------
-// Attachments
-// -----------------------------------------------------------------------------
+document.getElementById("model-sort").addEventListener("change", (e) => {
+    currentModelSort = e.target.value;
+    renderModelExplorer(document.getElementById("model-search").value);
+});
+
+// --- File/image attachment handling ---
 attachBtn.onclick = () => fileUpload.click();
 
-fileUpload.addEventListener("change", async event => {
-    const files = Array.from(event.target.files || []);
+fileUpload.addEventListener("change", async (e) => {
+    const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    try {
-        await addFiles(files);
-    } catch (error) {
-        alert(error.message);
-    } finally {
-        fileUpload.value = "";
-    }
+
+    await addFiles(files);
+    fileUpload.value = "";
 });
 
 async function addFiles(files) {
-    const prepared = [];
     for (const file of files) {
         if (file.type.startsWith("image/")) {
-            prepared.push(await prepareImageFile(file));
+            currentAttachedFiles.push(await prepareImageFile(file));
         } else {
-            prepared.push(await prepareTextFile(file));
+            currentAttachedFiles.push(await prepareTextFile(file));
         }
     }
 
-    currentAttachedFiles.push(...prepared);
     renderAttachmentPreview();
 }
 
-// The WebLLM VLM path can fail when one image's embedding is larger than the
-// compiled 2048-token prefill chunk. Reducing the image dimensions before it is
-// handed to WebLLM is the reliable browser-side fix because no model recompilation
-// is needed. 448 px is deliberately conservative while retaining screenshot text.
 function prepareImageFile(file) {
     return new Promise((resolve, reject) => {
-        const image = new Image();
+        const img = new Image();
         const url = URL.createObjectURL(file);
 
-        image.onload = () => {
+        img.onload = () => {
             try {
-                // Phi-3.5 Vision's processor resolves 1344x1008 (W x H) to
-                // 1921 image tokens. The transposed 1008x1344 case resolves
-                // to 1933 tokens and causes the compiled WebLLM model to fail.
-                const TARGET_WIDTH = 1344;
-                const TARGET_HEIGHT = 1008;
-
                 const canvas = document.createElement("canvas");
-                canvas.width = TARGET_WIDTH;
-                canvas.height = TARGET_HEIGHT;
+                const MAX_SIZE = 1024;
 
-                const ctx = canvas.getContext("2d", { alpha: false });
-                if (!ctx) throw new Error("Could not create image canvas.");
+                let width = img.naturalWidth || img.width;
+                let height = img.naturalHeight || img.height;
 
-                ctx.fillStyle = "#ffffff";
-                ctx.fillRect(0, 0, TARGET_WIDTH, TARGET_HEIGHT);
+                if (width > MAX_SIZE || height > MAX_SIZE) {
+                    const scale = Math.min(MAX_SIZE / width, MAX_SIZE / height);
+                    width = Math.round(width * scale);
+                    height = Math.round(height * scale);
+                }
 
-                const scale = Math.min(
-                    TARGET_WIDTH / image.naturalWidth,
-                    TARGET_HEIGHT / image.naturalHeight
-                );
+                canvas.width = width;
+                canvas.height = height;
 
-                const drawWidth = Math.max(1, Math.round(image.naturalWidth * scale));
-                const drawHeight = Math.max(1, Math.round(image.naturalHeight * scale));
-                const offsetX = Math.round((TARGET_WIDTH - drawWidth) / 2);
-                const offsetY = Math.round((TARGET_HEIGHT - drawHeight) / 2);
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, width, height);
 
-                ctx.drawImage(
-                    image,
-                    offsetX,
-                    offsetY,
-                    drawWidth,
-                    drawHeight
-                );
-
-                const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+                const dataUrl = canvas.toDataURL("image/jpeg", 0.86);
 
                 resolve({
                     name: file.name || "pasted-image.jpg",
                     isImage: true,
                     data: dataUrl
                 });
-            } catch (error) {
-                reject(
-                    new Error(
-                        `Could not process image: ${file.name || "pasted image"}`
-                    )
-                );
             } finally {
                 URL.revokeObjectURL(url);
             }
         };
 
-        image.onerror = () => {
+        img.onerror = () => {
             URL.revokeObjectURL(url);
-            reject(
-                new Error(
-                    `Could not read image: ${file.name || "pasted image"}`
-                )
-            );
+            reject(new Error(`Could not read image: ${file.name}`));
         };
 
-        image.src = url;
+        img.src = url;
     });
 }
 
 function prepareTextFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = event => resolve({
-            name: file.name,
-            isImage: false,
-            data: String(event.target.result || "")
-        });
+
+        reader.onload = (event) => {
+            resolve({
+                name: file.name,
+                isImage: false,
+                data: String(event.target.result || "")
+            });
+        };
+
         reader.onerror = () => reject(new Error(`Could not read file: ${file.name}`));
         reader.readAsText(file);
     });
 }
 
-// Paste screenshots/images directly into the message field.
-userInput.addEventListener("paste", async event => {
-    const imageFiles = Array.from(event.clipboardData?.items || [])
-        .filter(item => item.type.startsWith("image/"))
+// Paste images/screenshots directly into the chat input.
+userInput.addEventListener("paste", async (event) => {
+    const items = Array.from(event.clipboardData?.items || []);
+    const imageItems = items.filter(item => item.type.startsWith("image/"));
+
+    if (!imageItems.length) return;
+
+    const imageFiles = imageItems
         .map(item => item.getAsFile())
         .filter(Boolean);
 
-    if (!imageFiles.length) return;
-
-    event.preventDefault();
-    try {
+    if (imageFiles.length) {
+        event.preventDefault();
         await addFiles(imageFiles);
-    } catch (error) {
-        alert(error.message);
     }
 });
 
 function renderAttachmentPreview() {
     attachmentList.innerHTML = "";
+
     if (!currentAttachedFiles.length) {
         attachmentPreview.style.display = "none";
         return;
@@ -438,15 +532,16 @@ function renderAttachmentPreview() {
         pill.className = "pending-attachment";
 
         if (file.isImage) {
-            const image = document.createElement("img");
-            image.src = file.data;
-            image.alt = file.name;
-            pill.appendChild(image);
+            const img = document.createElement("img");
+            img.src = file.data;
+            img.alt = file.name;
+            pill.appendChild(img);
         }
 
-        const name = document.createElement("span");
-        name.textContent = `${file.isImage ? "📷 " : "📎 "}${file.name}`;
-        pill.appendChild(name);
+        const span = document.createElement("span");
+        span.textContent = `${file.isImage ? "📷 " : "📎 "}${file.name}`;
+        pill.appendChild(span);
+
         attachmentList.appendChild(pill);
     });
 
@@ -455,48 +550,50 @@ function renderAttachmentPreview() {
 
 function clearAttachments() {
     currentAttachedFiles = [];
+    fileUpload.value = "";
     attachmentList.innerHTML = "";
     attachmentPreview.style.display = "none";
-    fileUpload.value = "";
 }
 
 removeAttachmentBtn.onclick = clearAttachments;
 
-// -----------------------------------------------------------------------------
-// Chat / history
-// -----------------------------------------------------------------------------
+// --- Chat UI ---
 function appendMessageToUI(role, text, msgId = null, metricsHtml = "", attachments = []) {
     const container = document.createElement("div");
     container.className = `message-container ${role === "user" ? "user" : "ai"}`;
 
-    const message = document.createElement("div");
-    message.className = `message ${role === "user" ? "user-msg" : "ai-msg"}`;
+    const msgDiv = document.createElement("div");
+    msgDiv.className = `message ${role === "user" ? "user-msg" : "ai-msg"}`;
 
-    for (const attachment of attachments || []) {
-        if (attachment.isImage && attachment.data) {
-            const image = document.createElement("img");
-            image.src = attachment.data;
-            image.alt = attachment.name || "image";
-            image.className = "chat-image-preview";
-            message.appendChild(image);
-        } else if (!attachment.isImage) {
-            const pill = document.createElement("div");
-            pill.className = "attachment-pill";
-            pill.textContent = `📎 ${attachment.name}`;
-            message.appendChild(pill);
-            message.appendChild(document.createElement("br"));
-        }
+    if (attachments?.length) {
+        attachments.forEach(att => {
+            if (att.isImage) {
+                const imgPreview = document.createElement("img");
+                imgPreview.src = att.data;
+                imgPreview.className = "chat-image-preview";
+                imgPreview.alt = att.name;
+                msgDiv.appendChild(imgPreview);
+            } else {
+                const attachPill = document.createElement("div");
+                attachPill.className = "attachment-pill";
+                attachPill.textContent = `📎 ${att.name}`;
+                msgDiv.appendChild(attachPill);
+                msgDiv.appendChild(document.createElement("br"));
+            }
+        });
     }
 
-    message.appendChild(document.createTextNode(text || ""));
-    if (msgId) message.id = msgId;
-    container.appendChild(message);
+    const textNode = document.createTextNode(text);
+    msgDiv.appendChild(textNode);
+
+    if (msgId) msgDiv.id = msgId;
+    container.appendChild(msgDiv);
 
     if (metricsHtml) {
-        const metrics = document.createElement("div");
-        metrics.className = "metrics";
-        metrics.innerHTML = metricsHtml;
-        container.appendChild(metrics);
+        const metricsDiv = document.createElement("div");
+        metricsDiv.className = "metrics";
+        metricsDiv.innerHTML = metricsHtml;
+        container.appendChild(metricsDiv);
     }
 
     chatMessages.appendChild(container);
@@ -505,12 +602,14 @@ function appendMessageToUI(role, text, msgId = null, metricsHtml = "", attachmen
 
 function saveChatToLocal() {
     if (!currentMessages.length) return;
+
     try {
         chats[currentChatId] = currentMessages;
         localStorage.setItem("local_ai_chats", JSON.stringify(chats));
-    } catch (error) {
-        console.error("Storage error (browser storage may be full):", error);
+    } catch (e) {
+        console.error("Storage error (might be full):", e);
     }
+
     renderHistorySidebar();
 }
 
@@ -525,22 +624,24 @@ function renderHistorySidebar() {
             loadChat(id);
         };
 
-        const title = document.createElement("span");
-        title.className = "chat-title";
-        title.textContent = chats[id][0]?.displayContent || "New Chat";
+        const titleSpan = document.createElement("span");
+        titleSpan.className = "chat-title";
+
+        const firstMsgText = chats[id][0]?.displayContent || "New Chat";
+        titleSpan.textContent = firstMsgText;
 
         const deleteBtn = document.createElement("button");
         deleteBtn.className = "delete-btn";
         deleteBtn.innerHTML = "&times;";
-        deleteBtn.onclick = event => {
-            event.stopPropagation();
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
             delete chats[id];
             localStorage.setItem("local_ai_chats", JSON.stringify(chats));
             if (currentChatId === id) newChatBtn.click();
             else renderHistorySidebar();
         };
 
-        item.appendChild(title);
+        item.appendChild(titleSpan);
         item.appendChild(deleteBtn);
         historyList.appendChild(item);
     });
@@ -552,15 +653,13 @@ function loadChat(id) {
     chatMessages.innerHTML = "";
     chatMessages.appendChild(loadingContainer);
 
-    for (const message of currentMessages) {
-        appendMessageToUI(
-            message.role,
-            message.displayContent || message.content || "",
-            null,
-            "",
-            message.role === "user" ? (message.attachments || []) : []
-        );
-    }
+    currentMessages.forEach(msg => {
+        if (msg.role === "user" && msg.attachments?.length) {
+            appendMessageToUI("user", msg.displayContent, null, "", msg.attachments);
+        } else {
+            appendMessageToUI(msg.role, msg.displayContent || msg.content);
+        }
+    });
 
     renderHistorySidebar();
 }
@@ -572,52 +671,48 @@ newChatBtn.onclick = () => {
     loadChat(currentChatId);
 };
 
-// -----------------------------------------------------------------------------
-// Send
-// -----------------------------------------------------------------------------
+// --- Send / multimodal processing ---
 sendBtn.onclick = async () => {
     const rawInput = userInput.value.trim();
 
-    if ((!rawInput && !currentAttachedFiles.length) || !engine || isBusy) {
-        return;
-    }
-
-    const attachments = currentAttachedFiles.map(file => ({
-        name: file.name,
-        isImage: file.isImage,
-        data: file.data
-    }));
-
-    const hasImages = attachments.some(file => file.isImage);
-
-    if (hasImages && !isVisionModel(currentModel)) {
-        alert(
-            `"${getModel(currentModel)?.name || currentModel}" does not support images. Select a model marked "📷 supports images." in Explore all models.`
-        );
-        return;
-    }
+    if ((!rawInput && !currentAttachedFiles.length) || !engine || isBusy) return;
 
     isBusy = true;
     setControlsEnabled(false);
 
-    const displayText = rawInput || (
-        attachments.length > 1
-            ? "Please analyze the attached files."
-            : hasImages
-                ? "Please analyze this image in detail."
-                : "Please analyze this file."
-    );
-
-    const storedAttachments = attachments.map(file => ({
+    const attachments = currentAttachedFiles.map(file => ({
         name: file.name,
         isImage: file.isImage,
-        data: file.data
+        data: file.isImage ? file.data : undefined,
+        ...(file.isImage ? {} : { data: file.data })
+    }));
+
+    const hasImages = attachments.some(a => a.isImage);
+    const hasVisionModel = isVisionModel(currentModel);
+
+    if (hasImages && !hasVisionModel) {
+        isBusy = false;
+        setControlsEnabled(true);
+        alert(`"${getModel(currentModel)?.name || currentModel}" does not support images. Select a model marked "📷 supports images." in Explore all models.`);
+        return;
+    }
+
+    const displayText = rawInput || (
+        hasImages
+            ? `Please analyze ${attachments.filter(a => a.isImage).length > 1 ? "these images" : "this image"} in detail.`
+            : "Please analyze these files."
+    );
+
+    const storedAttachments = attachments.map(a => ({
+        name: a.name,
+        isImage: a.isImage,
+        data: a.isImage ? a.data : undefined
     }));
 
     const messageObj = {
         role: "user",
         content: null,
-        promptText: rawInput,
+        promptText: rawInput || "",
         displayContent: displayText,
         attachments: storedAttachments
     };
@@ -626,25 +721,17 @@ sendBtn.onclick = async () => {
     clearAttachments();
 
     currentMessages.push(messageObj);
-
-    appendMessageToUI(
-        "user",
-        displayText,
-        null,
-        "",
-        storedAttachments
-    );
-
+    appendMessageToUI("user", displayText, null, "", storedAttachments);
     saveChatToLocal();
 
-    const replyId = `reply-${Date.now()}`;
+    const replyId = "reply-" + Date.now();
     const metricId = `metric-${replyId}`;
 
     appendMessageToUI(
         "assistant",
         "...",
         replyId,
-        `<span id="${metricId}">${hasImages ? thinkingDotsHtml() : "Generating..."}</span>`
+        `<span id="${metricId}">${hasImages ? "Thinking" : "Generating..."}</span>`
     );
 
     const replyDiv = document.getElementById(replyId);
@@ -652,237 +739,186 @@ sendBtn.onclick = async () => {
     const startTime = performance.now();
 
     try {
-        const memCtx = savedProfile.trim()
-            ? `User info: ${savedProfile}. `
-            : "";
-
+        const memCtx = savedProfile.trim() ? `User info: ${savedProfile}. ` : "";
         const sysInstruction =
-            `${savedSysPrompt}\n\n${memCtx}` +
-            "RULE: If the user tells you a new fact about themselves, silently append it at the very end of your response inside <memory> tags, exactly like <memory>fact</memory>.";
+            `${savedSysPrompt}
 
-        // Process each attachment independently. In Phi-3.5 Vision's compiled
-        // WebLLM path, one image already consumes ~1921 prefill tokens, leaving
-        // too little room to safely embed a second image in the same request.
-        const jobs = attachments.length
-            ? attachments
-            : [{ name: "", isImage: false, data: null }];
+${memCtx}
+` +
+            `RULE: If the user tells you a new fact about themselves, silently append it ` +
+            `at the very end of your response inside <memory> tags, exactly like ` +
+            `<memory>fact</memory>.`;
 
-        const outputs = [];
+        // Build a single multimodal user message when images are present.
+        // Text files are inserted as plain text context.
+        let userContent;
 
-        for (let index = 0; index < jobs.length; index++) {
-            const attachment = jobs[index];
+        const promptParts = [];
 
+        if (rawInput) {
+            promptParts.push({ type: "text", text: rawInput });
+        } else if (hasImages) {
+            promptParts.push({
+                type: "text",
+                text: attachments.filter(a => a.isImage).length > 1
+                    ? "Analyze each attached image carefully. Discuss them separately and in order."
+                    : "Describe and analyze this image in detail."
+            });
+        } else {
+            promptParts.push({ type: "text", text: "Please analyze the attached files." });
+        }
+
+        for (const attachment of attachments) {
             if (attachment.isImage) {
-                metricSpan.innerHTML = thinkingDotsHtml();
-                await nextFrame();
-            }
-
-            const parts = [];
-
-            if (rawInput) {
-                parts.push({ type: "text", text: rawInput });
-            } else if (attachment.isImage) {
-                parts.push({
-                    type: "text",
-                    text: "Describe and analyze this image in detail."
-                });
-            } else if (attachment.data !== null) {
-                parts.push({
-                    type: "text",
-                    text: "Please analyze this attached file."
-                });
-            } else {
-                parts.push({
-                    type: "text",
-                    text: rawInput || "Hello."
-                });
-            }
-
-            if (attachment.isImage) {
-                parts.push({
+                promptParts.push({
                     type: "image_url",
                     image_url: { url: attachment.data }
                 });
-            } else if (attachment.data !== null) {
-                parts.push({
+            } else {
+                promptParts.push({
                     type: "text",
-                    text:
-                        `\n\n--- Attached File: ${attachment.name} ---\n${attachment.data}\n--- End of File ---`
+                    text: `\n\n--- Attached File: ${attachment.name} ---\n${attachment.data}\n--- End of File ---`
                 });
-            }
-
-            // Previous uploaded images are deliberately reduced to their text
-            // description in history. This guarantees one image maximum in the
-            // VLM request even on later turns of the same conversation.
-            const history = currentMessages
-                .slice(0, -1)
-                .slice(-10)
-                .map(message => ({
-                    role: message.role,
-                    content: messageToModelContent(message)
-                }));
-
-            const stream = await engine.chat.completions.create({
-                messages: [
-                    { role: "system", content: sysInstruction },
-                    ...history,
-                    { role: "user", content: parts }
-                ],
-                stream: true
-            });
-
-            let replyText = "";
-            let chunkCount = 0;
-
-            for await (const chunk of stream) {
-                replyText += chunk.choices[0]?.delta?.content || "";
-                chunkCount++;
-
-                if (attachment.isImage) {
-                    metricSpan.innerHTML = thinkingDotsHtml();
-                }
-
-                const visibleText = stripMemoryTagFromStream(replyText);
-
-                if (jobs.length === 1) {
-                    replyDiv.textContent = visibleText;
-                } else {
-                    const liveOutputs = [...outputs, visibleText];
-                    replyDiv.textContent = liveOutputs
-                        .map((text, outputIndex) =>
-                            `### ${jobs[outputIndex].name || `Response ${outputIndex + 1}`}\n${text}`
-                        )
-                        .join("\n\n");
-                }
-
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
-
-            outputs.push(
-                replyText
-                    .replace(/<memory>[\s\S]*?<\/memory>/gi, "")
-                    .trim()
-            );
-
-            updateMemoryFromReply(replyText);
-
-            if (attachment.isImage) {
-                metricSpan.innerHTML = thinkingDotsHtml();
             }
         }
 
-        const finalReply = outputs
-            .map((text, index) =>
-                jobs.length === 1
-                    ? text
-                    : `### ${jobs[index].name || `Response ${index + 1}`}\n${text}`
-            )
-            .join("\n\n")
+        userContent = (hasImages ? promptParts : promptParts.map(p => p.text).join(""));
+
+        const aiReadyMessages = currentMessages
+            .slice(-10)
+            .map(m => {
+                if (m === messageObj) {
+                    return { role: "user", content: userContent };
+                }
+                return { role: m.role, content: messageToModelContent(m) };
+            });
+
+        let replyText = "";
+        let chunkCount = 0;
+
+        if (hasImages) {
+            const stream = await engine.chat.completions.create({
+                messages: [{ role: "system", content: sysInstruction }, ...aiReadyMessages],
+                stream: true
+            });
+
+            for await (const chunk of stream) {
+                const delta = chunk.choices[0]?.delta?.content || "";
+                if (!delta) continue;
+
+                replyText += delta;
+                chunkCount++;
+
+                metricSpan.textContent = "Thinking";
+
+                let display = replyText;
+                if (display.includes("<memory>")) {
+                    display = display.split("<memory>")[0];
+                }
+
+                replyDiv.textContent = display;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            metricSpan.textContent = "Thinking";
+        } else {
+            const stream = await engine.chat.completions.create({
+                messages: [{ role: "system", content: sysInstruction }, ...aiReadyMessages],
+                stream: true
+            });
+
+            for await (const chunk of stream) {
+                replyText += chunk.choices[0]?.delta?.content || "";
+
+                let display = replyText;
+                if (display.includes("<memory>")) {
+                    display = display.split("<memory>")[0];
+                }
+
+                replyDiv.textContent = display;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+        }
+
+        const timeSec = (performance.now() - startTime) / 1000;
+        const estTokens = Math.max(1, Math.round(replyText.length / 4));
+        const finalMetrics = hasImages
+            ? `Analysed • ${estTokens} tokens • ${timeSec.toFixed(1)}s`
+            : `${estTokens} tokens • ${timeSec.toFixed(1)}s • ${(estTokens / Math.max(timeSec, 0.001)).toFixed(1)} tok/s`;
+
+        metricSpan.textContent = finalMetrics;
+
+        // Parse memory tags.
+        const memMatch = /<memory>\s*(.*?)\s*<\/memory>/gi;
+        let match;
+
+        while ((match = memMatch.exec(replyText)) !== null) {
+            const newFact = match[1].trim();
+            if (newFact && !savedProfile.includes(newFact)) {
+                savedProfile += (savedProfile.length > 0 ? "\n" : "") + `- ${newFact}`;
+                document.getElementById("profile-textarea").value = savedProfile;
+                localStorage.setItem("local_ai_profile_text", savedProfile);
+            }
+        }
+
+        const cleanReply = replyText
+            .replace(/<memory>[\s\S]*?<\/memory>/gi, "")
             .trim();
 
-        replyDiv.textContent = finalReply || "(No text response returned.)";
-
-        const timeSec = Math.max(
-            (performance.now() - startTime) / 1000,
-            0.001
-        );
-
-        const estTokens = Math.max(
-            1,
-            Math.round(finalReply.length / 4)
-        );
-
-        metricSpan.textContent = hasImages
-            ? `Analysed • ${estTokens} tokens • ${timeSec.toFixed(1)}s`
-            : `${estTokens} tokens • ${timeSec.toFixed(1)}s • ${(estTokens / timeSec).toFixed(1)} tok/s`;
+        replyDiv.textContent = cleanReply || "(No text response returned.)";
 
         currentMessages.push({
             role: "assistant",
-            content: finalReply,
-            displayContent: finalReply
+            content: cleanReply,
+            displayContent: cleanReply
         });
 
         saveChatToLocal();
-
     } catch (error) {
         console.error(error);
-
-        replyDiv.textContent =
-            `Generation failed: ${error?.message || "unknown error"}`;
-
+        replyDiv.textContent = `Generation failed: ${error?.message || "unknown error"}`;
         metricSpan.textContent = hasImages
             ? "Image analysis failed"
             : "Generation failed";
     } finally {
         isBusy = false;
-        setControlsEnabled(Boolean(engine));
+        setControlsEnabled(true);
         userInput.focus();
     }
 };
 
-userInput.addEventListener("keypress", event => {
-    if (event.key === "Enter") sendBtn.click();
+userInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") sendBtn.click();
 });
 
+// --- Utilities ---
 function messageToModelContent(message) {
-    if (message.role === "user" && message.attachments?.length) {
-        // Do not resend old image binaries to a Phi-3.5 Vision request. The
-        // current image is embedded separately; history stays text-only.
-        const prompt = message.promptText || message.displayContent || "";
-        const names = message.attachments
-            .map(attachment => attachment.name)
-            .filter(Boolean)
-            .join(", ");
-
-        return names
-            ? `${prompt}${prompt ? "\n" : ""}[Previously attached: ${names}]`
-            : prompt;
+    if (message.role !== "user" || !message.attachments?.length) {
+        return message.content || message.displayContent || "";
     }
 
-    return message.content || message.displayContent || "";
-}
+    const parts = [];
+    const text = message.promptText || message.displayContent || "";
 
-function stripMemoryTagFromStream(text) {
-    return text.includes("<memory>") ? text.split("<memory>")[0] : text;
-}
+    if (text) parts.push({ type: "text", text });
 
-function updateMemoryFromReply(replyText) {
-    const matches = [...replyText.matchAll(/<memory>\s*(.*?)\s*<\/memory>/gi)];
-    for (const match of matches) {
-        const fact = match[1].trim();
-        if (!fact || savedProfile.includes(fact)) continue;
-        savedProfile += `${savedProfile ? "\n" : ""}- ${fact}`;
-        profileTextarea.value = savedProfile;
-        localStorage.setItem("local_ai_profile_text", savedProfile);
-    }
-}
-
-function thinkingDotsHtml() {
-    return '<span class="thinking-dots" aria-label="Thinking"><span>.</span><span>.</span><span>.</span></span>';
-}
-
-async function updateGpuUsageIndicator() {
-    // The normal WebGPU API exposes adapter/device information, limits and
-    // supported features, but does not expose an exact current per-tab GPU
-    // utilisation percentage. We therefore never fake a number here.
-    if (!navigator.gpu) {
-        gpuUsageElement.textContent = "GPU usage: unavailable";
-        return;
+    for (const attachment of message.attachments) {
+        if (attachment.isImage && attachment.data) {
+            parts.push({
+                type: "image_url",
+                image_url: { url: attachment.data }
+            });
+        } else if (!attachment.isImage && attachment.data) {
+            parts.push({
+                type: "text",
+                text: `\\n\\n--- Attached File: ${attachment.name} ---\\n${attachment.data}\\n--- End of File ---`
+            });
+        }
     }
 
-    try {
-        const adapter = await navigator.gpu.requestAdapter();
-        gpuUsageElement.textContent = adapter
-            ? "GPU usage: unavailable"
-            : "GPU usage: unavailable";
-    } catch (_) {
-        gpuUsageElement.textContent = "GPU usage: unavailable";
-    }
-}
-
-function startGpuUsageMonitor() {
-    updateGpuUsageIndicator();
-    setInterval(updateGpuUsageIndicator, 2000);
+    return parts.some(part => part.type === "image_url")
+        ? parts
+        : parts.map(part => part.text || "").join("");
 }
 
 function nextFrame() {
@@ -898,11 +934,7 @@ function escapeHtml(value) {
         .replaceAll("'", "&#039;");
 }
 
-// -----------------------------------------------------------------------------
-// Boot
-// -----------------------------------------------------------------------------
+// --- Boot ---
 updateModelSelectDropdown();
 renderModelExplorer();
-renderHistorySidebar();
-startGpuUsageMonitor();
 initAI(currentModel);
