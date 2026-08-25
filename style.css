@@ -352,19 +352,6 @@ textarea {
 
 textarea:focus { border-color: var(--yellow); }
 
-.models-scroll-area {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 4px;
-  padding-bottom: 40px;
-}
-
-.models-scroll-area .model-grid {
-  overflow: visible;
-  padding-bottom: 0;
-}
-
 .section-title {
   font-size: 14px;
   color: #888;
@@ -379,8 +366,8 @@ textarea:focus { border-color: var(--yellow); }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 15px;
-  overflow: visible;
-  padding-bottom: 0;
+  overflow-y: auto;
+  padding-bottom: 40px;
 }
 
 .model-card {
@@ -417,34 +404,69 @@ textarea:focus { border-color: var(--yellow); }
   font-weight: 650;
 }
 
+
+.models-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  padding-bottom: 24px;
+}
+
+.all-models-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.all-models-header .section-title {
+  flex: 1;
+}
+
+.sort-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #888;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sort-control select {
+  background: #1e1f20;
+  color: #ddd;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 8px 28px 8px 10px;
+  outline: none;
+  cursor: pointer;
+}
+
+.sort-control select:focus {
+  border-color: var(--yellow);
+}
+
 .model-resource {
   display: block;
   margin-top: 6px;
   color: #777;
   font-size: 11px;
+  line-height: 1.35;
 }
 
-.thinking-dots {
-  display: inline-flex;
-  width: 22px;
-  justify-content: flex-start;
-  letter-spacing: 2px;
+.model-grid {
+  overflow-y: visible;
 }
 
-.thinking-dots span {
-  opacity: 0.25;
-  animation: thinking-dot 1.2s infinite;
-}
+@media (max-width: 700px) {
+  .all-models-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 
-.thinking-dots span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.thinking-dots span:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes thinking-dot {
-  0%, 60%, 100% { opacity: 0.25; }
-  30% { opacity: 1; }
+  .sort-control {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
