@@ -8,7 +8,6 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="gpu-usage" aria-live="polite">GPU usage: unavailable</div>
   <div class="container">
     <aside class="sidebar">
       <button id="new-chat-btn" class="nav-btn">+ New Chat</button>
@@ -85,7 +84,18 @@
             <div class="model-grid" id="recent-models-grid"></div>
           </div>
 
-          <h3 class="section-title">All Models</h3>
+          <div class="all-models-header">
+            <h3 class="section-title">All Models</h3>
+            <label class="sort-control">
+              <span>Sort by</span>
+              <select id="model-sort">
+                <option value="alphabetical" selected>Alphabetical</option>
+                <option value="gpu_low">Lowest GPU first</option>
+                <option value="gpu_high">Highest GPU first</option>
+                <option value="images_first">Image supported first</option>
+              </select>
+            </label>
+          </div>
           <div class="model-grid" id="all-models-grid"></div>
         </div>
       </div>
